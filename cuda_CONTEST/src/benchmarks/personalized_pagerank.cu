@@ -97,6 +97,22 @@ void PersonalizedPageRank::alloc() {
 
     // Allocate any GPU data here;
     // TODO!
+    
+    std::cout << "Val vector" << "\n";
+    for(int i=0; i < val.size(); i++)
+    std::cout << val.at(i) << ' ';
+    
+    
+    std::cout << "\n";
+    std::cout << "X vector" << "\n";  
+    for(int i=0; i < x.size(); i++)
+    std::cout << x.at(i) << ' ';  
+
+    std::cout << "\n";
+    std::cout << "Y vector" << "\n";
+    for(int i=0; i < y.size(); i++)
+    std::cout << y.at(i) << ' ';
+    
 }
 
 // Initialize data;
