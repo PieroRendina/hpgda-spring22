@@ -50,8 +50,8 @@
 #define DEFAULT_DO_CPU_VALIDATION false
 
 // Options for PPR;
-// #define DEFAULT_GRAPH "data/small.mtx"
-#define DEFAULT_GRAPH "data/California.mtx"
+#define DEFAULT_GRAPH "data/small.mtx"
+// #define DEFAULT_GRAPH "data/California.mtx"
 // #define DEFAULT_GRAPH "data/wikipedia-20070206.mtx"
 #define DEFAULT_ALPHA 0.85
 #define DEFAULT_MAX_ITER 30
