@@ -45,45 +45,55 @@ using clock_type = chrono::high_resolution_clock;
 // CPU Utility functions;
 
 // Read the input graph and initialize it;
-void PersonalizedPageRank::initialize_graph() {
+void PersonalizedPageRank::initialize_graph()
+{
     // Read the graph from an MTX file;
     int num_rows = 0;
     int num_columns = 0;
     read_mtx(graph_file_path.c_str(), &x, &y, &val,
-        &num_rows, &num_columns, &E, // Store the number of vertices (row and columns must be the same value), and edges;
-        true,                        // If true, read edges TRANSPOSED, i.e. edge (2, 3) is loaded as (3, 2). We set this true as it simplifies the PPR computation;
-        false,                       // If true, read the third column of the matrix file. If false, set all values to 1 (this is what you want when reading a graph topology);
-        debug,                 
-        false,                       // MTX files use indices starting from 1. If for whatever reason your MTX files uses indices that start from 0, set zero_indexed_file=true;
-        true                         // If true, sort the edges in (x, y) order. If you have a sorted MTX file, turn this to false to make loading faster;
+             &num_rows, &num_columns, &E, // Store the number of vertices (row and columns must be the same value), and edges;
+             true,                        // If true, read edges TRANSPOSED, i.e. edge (2, 3) is loaded as (3, 2). We set this true as it simplifies the PPR computation;
+             false,                       // If true, read the third column of the matrix file. If false, set all values to 1 (this is what you want when reading a graph topology);
+             debug,
+             false, // MTX files use indices starting from 1. If for whatever reason your MTX files uses indices that start from 0, set zero_indexed_file=true;
+             true   // If true, sort the edges in (x, y) order. If you have a sorted MTX file, turn this to false to make loading faster;
     );
-    if (num_rows != num_columns) {
-        if (debug) std::cout << "error, the matrix is not squared, rows=" << num_rows << ", columns=" << num_columns << std::endl;
+    if (num_rows != num_columns)
+    {
+        if (debug)
+            std::cout << "error, the matrix is not squared, rows=" << num_rows << ", columns=" << num_columns << std::endl;
         exit(-1);
-    } else {
+    }
+    else
+    {
         V = num_rows;
     }
-    if (debug) std::cout << "loaded graph, |V|=" << V << ", |E|=" << E << std::endl;
+    if (debug)
+        std::cout << "loaded graph, |V|=" << V << ", |E|=" << E << std::endl;
 
     // Compute the dangling vector. A vertex is not dangling if it has at least 1 outgoing edge;
     dangling.resize(V);
-    std::fill(dangling.begin(), dangling.end(), 1);  // Initially assume all vertices to be dangling;
-    for (int i = 0; i < E; i++) {
+    std::fill(dangling.begin(), dangling.end(), 1); // Initially assume all vertices to be dangling;
+    for (int i = 0; i < E; i++)
+    {
         // Ignore self-loops, a vertex is still dangling if it has only self-loops;
-        if (x[i] != y[i]) dangling[y[i]] = 0;
+        if (x[i] != y[i])
+            dangling[y[i]] = 0;
     }
     // Initialize the CPU PageRank vector;
     pr.resize(V);
     pr_golden.resize(V);
     // Initialize the value vector of the graph (1 / outdegree of each vertex).
     // Count how many edges start in each vertex (here, the source vertex is y as the matrix is transposed);
-    int *outdegree = (int *) calloc(V, sizeof(int));
-    for (int i = 0; i < E; i++) {
+    int *outdegree = (int *)calloc(V, sizeof(int));
+    for (int i = 0; i < E; i++)
+    {
         outdegree[y[i]]++;
     }
     // Divide each edge value by the outdegree of the source vertex;
-    for (int i = 0; i < E; i++) {
-        val[i] = 1.0 / outdegree[y[i]];  
+    for (int i = 0; i < E; i++)
+    {
+        val[i] = 1.0 / outdegree[y[i]];
     }
     free(outdegree);
 }
@@ -92,72 +102,89 @@ void PersonalizedPageRank::initialize_graph() {
 //////////////////////////////
 
 // Allocate data on the CPU and GPU;
-void PersonalizedPageRank::alloc() {
+void PersonalizedPageRank::alloc()
+{
     // Load the input graph and preprocess it;
     initialize_graph();
 
     // Allocate any GPU data here;
     // TODO!
+}
+
+// Initialize data;
+void PersonalizedPageRank::init()
+{
+    // Do any additional CPU or GPU setup here;
+    // TODO!
+
     // Build the adjacency list of the graph
-    std::vector<std::list<int>> adjacency_list;
-    for(int i = 0; i < V; i++){
-      std::list<int> neighbors;
-      for(int j = 0; j < E; j++) {
-        if(y.at(j) == i) {
-          neighbors.push_back(x.at(j));
+
+    for (int i = 0; i < V; i++)
+    {
+        std::list<int> neighbors;
+        for (int j = 0; j < E; j++)
+        {
+            if (y.at(j) == i)
+            {
+                neighbors.push_back(x.at(j));
+            }
         }
-      }
-      adjacency_list.push_back(neighbors);
+        adjacency_list.push_back(neighbors);
     }
 
     // Print the adjacency list
-    for(int i = 0; i < V; i++) {
-      // create an iterator to iterate overall the list
-      std::list<int>::iterator it;
-      for(it = adjacency_list[i].begin(); it!=adjacency_list[i].end(); it++){
-        std::cout << *(it) << ' ';
-      }
-      std::cout << '\n';
+    for (int i = 0; i < V; i++)
+    {
+        // create an iterator to iterate overall the list
+        std::list<int>::iterator it;
+        for (it = adjacency_list[i].begin(); it != adjacency_list[i].end(); it++)
+        {
+            std::cout << *(it) << ' ';
+        }
+        std::cout << '\n';
     }
-    
+
     // Build and print the vector whose values are i = 1/outdegree(node(i))
-    std::vector<float> degree;
-    for(int i=0; i < V; i++){
-      degree.push_back(1.0/adjacency_list[i].size());
+    for (int i = 0; i < V; i++)
+    {
+        degree.push_back(1.0 / adjacency_list[i].size());
     }
 
     std::cout << "\n";
-    for(int i=0; i < V; i++){
-      std::cout << degree.at(i) << ' ';
+    for (int i = 0; i < V; i++)
+    {
+        std::cout << degree.at(i) << ' ';
+    }
 
-}
-
-
-// Initialize data;
-void PersonalizedPageRank::init() {
-    // Do any additional CPU or GPU setup here;
-    // TODO!
+    // Compute Rmax
+    threshold = 1.0 / V; // should be O(1/n) but i don't know yet which is the best value
+    rmax = (convergence_threshold / sqrt(E)) * sqrt(threshold / (((2.0 * convergence_threshold / 3.0) + 2.0) * (log(2.0 / failure_probability))));
+    std::cout << rmax << '\n'; // It seems really small
 }
 
 // Reset the state of the computation after every iteration.
 // Reset the result, and transfer data to the GPU if necessary;
-void PersonalizedPageRank::reset() {
-   // Reset the PageRank vector (uniform initialization, 1 / V for each vertex);
-   std::fill(pr.begin(), pr.end(), 1.0 / V); 
-   // Generate a new personalization vertex for this iteration;
-   personalization_vertex = rand() % V; 
-   if (debug) std::cout << "personalization vertex=" << personalization_vertex << std::endl;
+void PersonalizedPageRank::reset()
+{
+    // Reset the PageRank vector (uniform initialization, 1 / V for each vertex);
+    std::fill(pr.begin(), pr.end(), 1.0 / V);
+    // Generate a new personalization vertex for this iteration;
+    personalization_vertex = rand() % V;
+    if (debug)
+        std::cout << "personalization vertex=" << personalization_vertex << std::endl;
 
-   // Do any GPU reset here, and also transfer data to the GPU;
-   // TODO!
+    // Do any GPU reset here, and also transfer data to the GPU;
+    // TODO!
 }
 
-void PersonalizedPageRank::execute(int iter) {
+void PersonalizedPageRank::execute(int iter)
+{
     // Do the GPU computation here, and also transfer results to the CPU;
-    //TODO! (and save the GPU PPR values into the "pr" array)
+    // TODO! (and save the GPU PPR values into the "pr" array)
 }
 
-void PersonalizedPageRank::cpu_validation(int iter) {
+void PersonalizedPageRank::cpu_validation(int iter)
+{
 
     // Reset the CPU PageRank vector (uniform initialization, 1 / V for each vertex);
     std::fill(pr_golden.begin(), pr_golden.end(), 1.0 / V);
@@ -179,17 +206,22 @@ void PersonalizedPageRank::cpu_validation(int iter) {
     int old_precision = std::cout.precision();
     std::cout.precision(4);
     int topk = std::min(V, topk_vertices);
-    for (int i = 0; i < topk; i++) {
+    for (int i = 0; i < topk; i++)
+    {
         int pr_id_gpu = sorted_pr_tuples[i].first;
         int pr_id_cpu = sorted_pr_golden_tuples[i].first;
         top_pr_indices.insert(pr_id_gpu);
         top_pr_golden_indices.insert(pr_id_cpu);
-        if (debug) {
+        if (debug)
+        {
             double pr_val_gpu = sorted_pr_tuples[i].second;
             double pr_val_cpu = sorted_pr_golden_tuples[i].second;
-            if (pr_id_gpu != pr_id_cpu) {
+            if (pr_id_gpu != pr_id_cpu)
+            {
                 std::cout << "* error in rank! (" << i << ") correct=" << pr_id_cpu << " (val=" << pr_val_cpu << "), found=" << pr_id_gpu << " (val=" << pr_val_gpu << ")" << std::endl;
-            } else if (std::abs(sorted_pr_tuples[i].second - sorted_pr_golden_tuples[i].second) > 1e-6) {
+            }
+            else if (std::abs(sorted_pr_tuples[i].second - sorted_pr_golden_tuples[i].second) > 1e-6)
+            {
                 std::cout << "* error in value! (" << i << ") correct=" << pr_id_cpu << " (val=" << pr_val_cpu << "), found=" << pr_id_gpu << " (val=" << pr_val_gpu << ")" << std::endl;
             }
         }
@@ -199,18 +231,24 @@ void PersonalizedPageRank::cpu_validation(int iter) {
     std::vector<int> correctly_retrieved_vertices;
     set_intersection(top_pr_indices.begin(), top_pr_indices.end(), top_pr_golden_indices.begin(), top_pr_golden_indices.end(), std::back_inserter(correctly_retrieved_vertices));
     precision = double(correctly_retrieved_vertices.size()) / topk;
-    if (debug) std::cout << "correctly retrived top-" << topk << " vertices=" << correctly_retrieved_vertices.size() << " (" << 100 * precision << "%)" << std::endl;
+    if (debug)
+        std::cout << "correctly retrived top-" << topk << " vertices=" << correctly_retrieved_vertices.size() << " (" << 100 * precision << "%)" << std::endl;
 }
 
-std::string PersonalizedPageRank::print_result(bool short_form) {
-    if (short_form) {
+std::string PersonalizedPageRank::print_result(bool short_form)
+{
+    if (short_form)
+    {
         return std::to_string(precision);
-    } else {
+    }
+    else
+    {
         // Print the first few PageRank values (not sorted);
         std::ostringstream out;
         out.precision(3);
         out << "[";
-        for (int i = 0; i < std::min(20, V); i++) {
+        for (int i = 0; i < std::min(20, V); i++)
+        {
             out << pr[i] << ", ";
         }
         out << "...]";
@@ -218,7 +256,8 @@ std::string PersonalizedPageRank::print_result(bool short_form) {
     }
 }
 
-void PersonalizedPageRank::clean() {
+void PersonalizedPageRank::clean()
+{
     // Delete any GPU data or additional CPU data;
     // TODO!
 }
