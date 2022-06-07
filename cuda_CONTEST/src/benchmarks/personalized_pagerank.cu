@@ -118,7 +118,6 @@ void PersonalizedPageRank::init()
     // TODO!
 
     // Build the adjacency list of the graph
-
     for (int i = 0; i < V; i++)
     {
         std::list<int> neighbors;
@@ -148,10 +147,13 @@ void PersonalizedPageRank::init()
     }
 
     // Build and print the vector whose values are i = 1/outdegree(node(i))
-
     for (int i = 0; i < V; i++)
     {
+      if(adjacency_list[i].size()==0){
+        degree.push_back(0.0);
+      }else{
         degree.push_back(1.0 / adjacency_list[i].size());
+      }
     }
 
     std::cout << "\n";
