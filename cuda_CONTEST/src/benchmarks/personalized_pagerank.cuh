@@ -148,5 +148,12 @@ class PersonalizedPageRank : public Benchmark {
     double precision = 0;     // How many top-20 vertices are correctly retrieved;
     std::string graph_file_path = DEFAULT_GRAPH;
 
+    // Variables added by us
+    double rmax; // The global residue threshold for forward push
+    double failure_probability = 0.2 // Failure Probability -> initially we are asking for accuracy = 0.8
+    double threshold;
+    std::vector<std::list<int>> adjacency_list;
+    std::vector<float> degree;
+
     void initialize_graph();
 };
