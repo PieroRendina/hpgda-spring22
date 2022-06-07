@@ -129,7 +129,7 @@ void PersonalizedPageRank::alloc() {
     std::cout << "\n";
     for(int i=0; i < V; i++){
       std::cout << degree.at(i) << ' ';
-
+    }
 }
 
 
