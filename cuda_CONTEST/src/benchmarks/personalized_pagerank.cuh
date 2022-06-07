@@ -30,6 +30,8 @@
 #pragma once
 #include <unordered_set>
 #include <iterator>
+#include <list>
+#include <vector>
 #include "../benchmark.cuh"
 
 // CPU Utility functions;
@@ -150,7 +152,7 @@ class PersonalizedPageRank : public Benchmark {
 
     // Variables added by us
     double rmax; // The global residue threshold for forward push
-    double failure_probability = 0.2 // Failure Probability -> initially we are asking for accuracy = 0.8
+    double failure_probability = 0.2; // Failure Probability -> initially we are asking for accuracy = 0.8
     double threshold;
     std::vector<std::list<int>> adjacency_list;
     std::vector<float> degree;
