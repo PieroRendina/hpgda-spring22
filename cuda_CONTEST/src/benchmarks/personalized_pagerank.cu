@@ -29,7 +29,8 @@
 
 #include <sstream>
 #include "personalized_pagerank.cuh"
-
+#include <list>
+#include <vector>
 namespace chrono = std::chrono;
 using clock_type = chrono::high_resolution_clock;
 
@@ -97,23 +98,30 @@ void PersonalizedPageRank::alloc() {
 
     // Allocate any GPU data here;
     // TODO!
-    
-    std::cout << "Val vector" << "\n";
-    for(int i=0; i < val.size(); i++)
-    std::cout << val.at(i) << ' ';
-    
-    
-    std::cout << "\n";
-    std::cout << "X vector" << "\n";  
-    for(int i=0; i < x.size(); i++)
-    std::cout << x.at(i) << ' ';  
+    // Build the adjacency list of the graph
+    std::vector<std::list<int>> adjacency_list;
+    for(int i = 0; i < V; i++){
+      std::list<int> neighbors;
+      for(int j = 0; j < E; j++) {
+        if(y.at(j) == i) {
+          neighbors.push_back(x.at(j));
+        }
+      }
+      adjacency_list.push_back(neighbors);
+    }
 
-    std::cout << "\n";
-    std::cout << "Y vector" << "\n";
-    for(int i=0; i < y.size(); i++)
-    std::cout << y.at(i) << ' ';
-    
+    // Print the adjacency list
+    for(int i = 0; i < V; i++) {
+      // create an iterator to iterate overall the list
+      std::list<int>::iterator it;
+      for(it = adjacency_list[i].begin(); it!=adjacency_list[i].end(); it++){
+        std::cout << *(it) << ' ';
+      }
+      std::cout << '\n';
+    }
+
 }
+
 
 // Initialize data;
 void PersonalizedPageRank::init() {
