@@ -133,10 +133,13 @@ void PersonalizedPageRank::init()
     }
 
     // Print the adjacency list
+    std::cout << '\n'
+              << "-- Adjacency list --" << '\n';
     for (int i = 0; i < V; i++)
     {
         // create an iterator to iterate overall the list
         std::list<int>::iterator it;
+        std::cout << i << " -> ";
         for (it = adjacency_list[i].begin(); it != adjacency_list[i].end(); it++)
         {
             std::cout << *(it) << ' ';
@@ -145,22 +148,24 @@ void PersonalizedPageRank::init()
     }
 
     // Build and print the vector whose values are i = 1/outdegree(node(i))
+
     for (int i = 0; i < V; i++)
     {
         degree.push_back(1.0 / adjacency_list[i].size());
     }
 
     std::cout << "\n";
+
+    std::cout << "-- 1/Out-degree --" << '\n';
     for (int i = 0; i < V; i++)
     {
-        std::cout << degree.at(i) << ' ';
+        std::cout << i << " = " << degree.at(i) << '\n';
     }
 
     // Compute Rmax
     threshold = 1.0 / V; // should be O(1/n) but i don't know yet which is the best value
     rmax = (convergence_threshold / sqrt(E)) * sqrt(threshold / (((2.0 * convergence_threshold / 3.0) + 2.0) * (log(2.0 / failure_probability))));
-    std::cout << rmax << '\n'; // It seems really small
-
+    std::cout << "rmax = " << rmax << '\n'; // It seems really small
 }
 
 // Reset the state of the computation after every iteration.
