@@ -151,7 +151,6 @@ void PersonalizedPageRank::init()
     }
 
     std::cout << "\n";
-<<<<<<< HEAD
     for (int i = 0; i < V; i++)
     {
         std::cout << degree.at(i) << ' ';
@@ -161,18 +160,7 @@ void PersonalizedPageRank::init()
     threshold = 1.0 / V; // should be O(1/n) but i don't know yet which is the best value
     rmax = (convergence_threshold / sqrt(E)) * sqrt(threshold / (((2.0 * convergence_threshold / 3.0) + 2.0) * (log(2.0 / failure_probability))));
     std::cout << rmax << '\n'; // It seems really small
-=======
-    for(int i=0; i < V; i++){
-      std::cout << degree.at(i) << ' ';
-    }
-}
 
-
-// Initialize data;
-void PersonalizedPageRank::init() {
-    // Do any additional CPU or GPU setup here;
-    // TODO!
->>>>>>> 0db46b3a786afeb61d4e8e1e321cd76a01f98a7f
 }
 
 // Reset the state of the computation after every iteration.
