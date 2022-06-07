@@ -119,6 +119,16 @@ void PersonalizedPageRank::alloc() {
       }
       std::cout << '\n';
     }
+    
+    // Build and print the vector whose values are i = 1/outdegree(node(i))
+    std::vector<float> degree;
+    for(int i=0; i < V; i++){
+      degree.push_back(1.0/adjacency_list[i].size());
+    }
+
+    std::cout << "\n";
+    for(int i=0; i < V; i++){
+      std::cout << degree.at(i) << ' ';
 
 }
 
