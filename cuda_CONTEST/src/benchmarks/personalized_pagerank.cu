@@ -38,17 +38,21 @@ using clock_type = chrono::high_resolution_clock;
 //////////////////////////////
 
 // Write GPU kernel here!
+__global__ void modify_one_value(double * residues, int personalization_vertex) {
+    residues[personalization_vertex] = 1.0;
+}
+
 
 //////////////////////////////
 //////////////////////////////
 
 void PersonalizedPageRank::initialize_csr() {
     // allocate the verteces with strictly positive outdegree
-    int count_ = count(dangling.begin(), dangling.end(), 0);
-    int * verteces = (int *)malloc(count_*sizeof(int));
+    count_ = count(dangling.begin(), dangling.end(), 0);
+    verteces = (int *)malloc(count_*sizeof(int));
     // allocate a vector containing the index of the starting neighbor
-    int * neighbor_start_idx = (int *)malloc((count_+1)*sizeof(int));
-    int * neighbors = (int *)malloc(E*sizeof(int));
+    neighbor_start_idx = (int *)malloc((count_+1)*sizeof(int));
+    neighbors = (int *)malloc(E*sizeof(int));
 
     int curr_vertex = 0;
     int curr_neighbor = 0;
@@ -151,9 +155,27 @@ void PersonalizedPageRank::alloc()
 {
     // Load the input graph and preprocess it;
     initialize_graph();
+    initialize_csr();
 
     // Allocate any GPU data here;
     // TODO!
+    err = cudaMalloc(&verteces_d, sizeof(int)*count_);
+    err = cudaMalloc(&neighbor_start_idx_d, sizeof(int)*(count_+1));
+    err = cudaMalloc(&neighbors_d, sizeof(int)*E);
+    err = cudaMalloc(&pi0_d, sizeof(double)*V);
+    err = cudaMalloc(&residues_d, sizeof(double)*V);
+
+    cudaMemset(residues_d, 0, sizeof(double)*V);
+    cudaMemset(pi0_d, 0, sizeof(double)*V);
+    
+    cudaMemcpy(verteces_d, verteces, sizeof(int)*count_, cudaMemcpyHostToDevice);
+    cudaMemcpy(neighbor_start_idx_d, verteces, sizeof(int)*(count_+1), cudaMemcpyHostToDevice);
+    cudaMemcpy(neighbors_d, neighbors, sizeof(int)*E, cudaMemcpyHostToDevice);
+
+    modify_one_value<<<1,1>>>(residues_d, personalization_vertex);
+    double * personal_x = (double*)malloc(sizeof(double)*V);
+    cudaMemcpy(personal_x, residues_d, sizeof(double)*V, cudaMemcpyDeviceToHost);
+    std::cout << "\nValue of x = " << personal_x[0];
 }
 
 // Initialize data;
@@ -214,7 +236,6 @@ void PersonalizedPageRank::init()
     rmax = (convergence_threshold / sqrt(E)) * sqrt(threshold / (((2.0 * convergence_threshold / 3.0) + 2.0) * (log(2.0 / failure_probability))));
     std::cout << "rmax = " << rmax << '\n'; // It seems really small
 
-    initialize_csr();
 }
 
 // Reset the state of the computation after every iteration.
