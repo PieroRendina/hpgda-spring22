@@ -160,5 +160,19 @@ class PersonalizedPageRank : public Benchmark {
     std::vector<std::list<int>> adjacency_list;
     std::vector<float> degree;
 
+    int count_;
+    int * verteces_d;
+    int * neighbor_start_idx_d;
+    int * neighbors_d;
+
+    int * verteces;
+    int * neighbor_start_idx;
+    int * neighbors;
+
+    // Residues values during forward push
+    double * residues_d;
+    // Reserve values during forward push
+    double * pi0_d;
+
     void initialize_graph();
 };
