@@ -42,7 +42,52 @@ using clock_type = chrono::high_resolution_clock;
 //////////////////////////////
 //////////////////////////////
 
+void PersonalizedPageRank::initialize_csr() {
+    // allocate the verteces with strictly positive outdegree
+    int count_ = count(dangling.begin(), dangling.end(), 0);
+    int * verteces = (int *)malloc(count_*sizeof(int));
+    // allocate a vector containing the index of the starting neighbor
+    int * neighbor_start_idx = (int *)malloc((count_+1)*sizeof(int));
+    int * neighbors = (int *)malloc(E*sizeof(int));
+
+    int curr_vertex = 0;
+    int curr_neighbor = 0;
+    int curr_neighbor_start_idx = 1;
+    neighbor_start_idx[0] = 0;
+
+    for(int i = 0; i < V; i++){
+        if(dangling[i] == 0) {
+            verteces[curr_vertex] = i;
+            curr_vertex++; 
+            for(int j = 0; j < E; j++) {
+                if(y[j] == i){
+                    neighbors[curr_neighbor] = x[j];
+                    curr_neighbor++;
+                }
+            }
+            neighbor_start_idx[curr_neighbor_start_idx] = curr_neighbor;
+            curr_neighbor_start_idx++;
+        } 
+    }
+
+    std::cout << "----- Verteces -----\n";
+    for(int i = 0; i < count_; i++){
+        std::cout << verteces[i] << " ";
+    }
+
+    std::cout << "\n----- Neighbours -----\n";
+    for(int i = 0; i < count_+1; i++){
+        std::cout << neighbor_start_idx[i] << " ";
+    }
+    std::cout << "\n----- Neighbours indeces -----\n";
+    for(int i = 0; i < E; i++){
+        std::cout << neighbors[i] << " ";
+    }
+}
+
 // CPU Utility functions;
+
+
 
 // Read the input graph and initialize it;
 void PersonalizedPageRank::initialize_graph()
@@ -117,7 +162,7 @@ void PersonalizedPageRank::init()
     // Do any additional CPU or GPU setup here;
     // TODO!
 
-    // Build the adjacency list of the graph
+    /* Build the adjacency list of the graph
     for (int i = 0; i < V; i++)
     {
         std::list<int> neighbors;
@@ -162,12 +207,14 @@ void PersonalizedPageRank::init()
     for (int i = 0; i < V; i++)
     {
         std::cout << i << " = " << degree.at(i) << '\n';
-    }
+    }*/
 
     // Compute Rmax
     threshold = 1.0 / V; // should be O(1/n) but i don't know yet which is the best value
     rmax = (convergence_threshold / sqrt(E)) * sqrt(threshold / (((2.0 * convergence_threshold / 3.0) + 2.0) * (log(2.0 / failure_probability))));
     std::cout << "rmax = " << rmax << '\n'; // It seems really small
+
+    initialize_csr();
 }
 
 // Reset the state of the computation after every iteration.
