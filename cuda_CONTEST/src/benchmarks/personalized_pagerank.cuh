@@ -133,6 +133,9 @@ class PersonalizedPageRank : public Benchmark {
     void cpu_validation(int iter);
     std::string print_result(bool short_form = false);
 
+    // CPU Utility functions
+    void initialize_csr();
+
    private:
     int V = 0;
     int E = 0;
