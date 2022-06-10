@@ -42,16 +42,89 @@ __global__ void modify_one_value(double * residues, int personalization_vertex) 
     residues[personalization_vertex] = 1.0;
 }
 
+__global__ void update_pi0_and_r(int * frontier, double alpha, double * pi0, double * r, int dim_frontier) {
+    // compute the index of the vertex in the frontier
+    for(int i = blockIdx.x * blockDim.x + threadIdx.x; i < dim_frontier; i += blockDim.x * gridDim.x) {
+        pi0[frontier[i]] += alpha * r[frontier[i]];
+        r[frontier[i]] = 0.0;
+    }
+}
+
+__global__ void compute_new_frontier(double * r, double rmax, bool * flags, int * outdegrees, double alpha, int * out_neighbors, int tot_neighbors) {
+    for(int j = blockIdx.x * blockDim.x + threadIdx.x; j < tot_neighbors ; j += blockDim.x * gridDim.x) {
+        if(outdegrees[j] > 0){
+            r[out_neighbors[j]] += (1 - alpha)*r[out_neighbors[j]]/outdegrees[j]; 
+            if(r[out_neighbors[j]]/outdegrees[j] > rmax && flags[out_neighbors[j]] != true) {
+                //thread syncing before updating the flags
+                __syncthreads;
+                flags[out_neighbors[j]] = true;
+          }
+        }else{
+            r[out_neighbors[j]] = 0;
+        }
+    }
+}
 
 //////////////////////////////
 //////////////////////////////
+
+void PersonalizedPageRank::update_frontiers() {
+    
+    /* --- Compute the number of neighbors and drop the nodes from the frontier --- */
+    // allocate the vector to store the degree of each node in the frontier
+    int tot_neighbors = 0;
+    int * outdegrees = (int *)malloc(sizeof(int) * dim_frontier);
+    std::cout << "1\n"; 
+    for(int i = 0; i < dim_frontier; i++) {
+        int start_idx = neighbor_start_idx_d[frontier[i]];
+        int end_idx = neighbor_start_idx_d[frontier[i]+1];
+        // outdegree computation
+        outdegrees[i] = end_idx - start_idx;
+        tot_neighbors += outdegrees[i];
+        // the node is dropped from the frontier
+        flags[frontier[i]] = false;
+    }
+    /* --- Add the neighbours to be considered in the vector out_neighbors --- */
+    int * out_neighbors = (int*)malloc(sizeof(int)*(tot_neighbors));
+    int counter = 0;
+    for(int i = 0; i < tot_neighbors; i++) {
+        int start_idx = neighbor_start_idx_d[frontier[i]];
+        int end_idx = neighbor_start_idx_d[frontier[i]+1];
+        for(int j = start_idx; j < end_idx; j++) {
+            out_neighbors[counter] = neighbors[j];
+            counter +=1;
+        }
+    }
+    /* --- Update of the frontier --- */
+    //int new_frontier_dim = 3*dim_frontier;
+    int new_frontier_dim = 30*dim_frontier;
+    int * new_frontier = (int *)malloc(new_frontier_dim*sizeof(int));
+
+    /* For each out_neighbor updates the residue and checks if it has to be added to the frontier */
+    //compute_new_frontier<<<ceil(tot_neighbors/1024)+1, ceil(tot_neighbors/ceil(tot_neighbors/1024))+1>>>(residues_d, rmax, flags, outdegrees, alpha, out_neighbors, tot_neighbors); 
+    int idx_frontier = 0;
+    for(int i = 0; i < V; i++) {
+        if(flags[i] == true) {
+            new_frontier[idx_frontier] = i;
+            idx_frontier++;
+        }
+    }
+
+    //cudaFree(frontier);
+    frontier = new_frontier;
+    dim_frontier = idx_frontier;
+    std::cout << "----- Updated frontier -----\n";
+    for(int i = 0; i < dim_frontier; i++) {
+        std::cout << frontier[i] << " ";
+    }
+}
+
+
 
 void PersonalizedPageRank::initialize_csr() {
-    // allocate the verteces with strictly positive outdegree
-    count_ = count(dangling.begin(), dangling.end(), 0);
-    verteces = (int *)malloc(count_*sizeof(int));
+    verteces = (int *)malloc(V*sizeof(int));
     // allocate a vector containing the index of the starting neighbor
-    neighbor_start_idx = (int *)malloc((count_+1)*sizeof(int));
+    neighbor_start_idx = (int *)malloc((V+1)*sizeof(int));
     neighbors = (int *)malloc(E*sizeof(int));
 
     int curr_vertex = 0;
@@ -60,8 +133,7 @@ void PersonalizedPageRank::initialize_csr() {
     neighbor_start_idx[0] = 0;
 
     for(int i = 0; i < V; i++){
-        if(dangling[i] == 0) {
-            verteces[curr_vertex] = i;
+        verteces[curr_vertex] = i;
             curr_vertex++; 
             for(int j = 0; j < E; j++) {
                 if(y[j] == i){
@@ -71,16 +143,15 @@ void PersonalizedPageRank::initialize_csr() {
             }
             neighbor_start_idx[curr_neighbor_start_idx] = curr_neighbor;
             curr_neighbor_start_idx++;
-        } 
     }
 
     std::cout << "----- Verteces -----\n";
-    for(int i = 0; i < count_; i++){
+    for(int i = 0; i < V; i++){
         std::cout << verteces[i] << " ";
     }
 
     std::cout << "\n----- Neighbours -----\n";
-    for(int i = 0; i < count_+1; i++){
+    for(int i = 0; i < V+1; i++){
         std::cout << neighbor_start_idx[i] << " ";
     }
     std::cout << "\n----- Neighbours indeces -----\n";
@@ -157,25 +228,31 @@ void PersonalizedPageRank::alloc()
     initialize_graph();
     initialize_csr();
 
+    // allocate the mask to store the status of the nodes in the frontier (all false by default)
+    flags = (bool *)malloc(sizeof(bool)*V);
+    // at the beginning the frontier contains just the personalization vertex
+    frontier = (int *)malloc(sizeof(int));
+
     // Allocate any GPU data here;
     // TODO!
-    err = cudaMalloc(&verteces_d, sizeof(int)*count_);
-    err = cudaMalloc(&neighbor_start_idx_d, sizeof(int)*(count_+1));
+    err = cudaMalloc(&verteces_d, sizeof(int)*V);
+    err = cudaMalloc(&neighbor_start_idx_d, sizeof(int)*(V+1));
     err = cudaMalloc(&neighbors_d, sizeof(int)*E);
     err = cudaMalloc(&pi0_d, sizeof(double)*V);
     err = cudaMalloc(&residues_d, sizeof(double)*V);
+    // some variables may be missing 
 
     cudaMemset(residues_d, 0, sizeof(double)*V);
     cudaMemset(pi0_d, 0, sizeof(double)*V);
     
-    cudaMemcpy(verteces_d, verteces, sizeof(int)*count_, cudaMemcpyHostToDevice);
-    cudaMemcpy(neighbor_start_idx_d, verteces, sizeof(int)*(count_+1), cudaMemcpyHostToDevice);
+    cudaMemcpy(verteces_d, verteces, sizeof(int)*V, cudaMemcpyHostToDevice);
+    cudaMemcpy(neighbor_start_idx_d, verteces, sizeof(int)*(V+1), cudaMemcpyHostToDevice);
     cudaMemcpy(neighbors_d, neighbors, sizeof(int)*E, cudaMemcpyHostToDevice);
 
     modify_one_value<<<1,1>>>(residues_d, personalization_vertex);
-    double * personal_x = (double*)malloc(sizeof(double)*V);
+    /*double * personal_x = (double*)malloc(sizeof(double)*V);
     cudaMemcpy(personal_x, residues_d, sizeof(double)*V, cudaMemcpyDeviceToHost);
-    std::cout << "\nValue of x = " << personal_x[0];
+    std::cout << "\nValue of x = " << personal_x[0];*/
 }
 
 // Initialize data;
@@ -184,58 +261,13 @@ void PersonalizedPageRank::init()
     // Do any additional CPU or GPU setup here;
     // TODO!
 
-    /* Build the adjacency list of the graph
-    for (int i = 0; i < V; i++)
-    {
-        std::list<int> neighbors;
-        for (int j = 0; j < E; j++)
-        {
-            if (y.at(j) == i)
-            {
-                neighbors.push_back(x.at(j));
-            }
-        }
-        adjacency_list.push_back(neighbors);
-    }
-
-    // Print the adjacency list
-    std::cout << '\n'
-              << "-- Adjacency list --" << '\n';
-    for (int i = 0; i < V; i++)
-    {
-        // create an iterator to iterate overall the list
-        std::list<int>::iterator it;
-        std::cout << i << " -> ";
-        for (it = adjacency_list[i].begin(); it != adjacency_list[i].end(); it++)
-        {
-            std::cout << *(it) << ' ';
-        }
-        std::cout << '\n';
-    }
-
-    // Build and print the vector whose values are i = 1/outdegree(node(i))
-    for (int i = 0; i < V; i++)
-    {
-      if(adjacency_list[i].size()==0){
-        degree.push_back(0.0);
-      }else{
-        degree.push_back(1.0 / adjacency_list[i].size());
-      }
-    }
-
-    std::cout << "\n";
-
-    std::cout << "-- 1/Out-degree --" << '\n';
-    for (int i = 0; i < V; i++)
-    {
-        std::cout << i << " = " << degree.at(i) << '\n';
-    }*/
-
     // Compute Rmax
     threshold = 1.0 / V; // should be O(1/n) but i don't know yet which is the best value
     rmax = (convergence_threshold / sqrt(E)) * sqrt(threshold / (((2.0 * convergence_threshold / 3.0) + 2.0) * (log(2.0 / failure_probability))));
     std::cout << "rmax = " << rmax << '\n'; // It seems really small
-
+    dim_frontier = 1;
+    frontier[0] = personalization_vertex;
+    flags[personalization_vertex] = true;
 }
 
 // Reset the state of the computation after every iteration.
@@ -257,6 +289,15 @@ void PersonalizedPageRank::execute(int iter)
 {
     // Do the GPU computation here, and also transfer results to the CPU;
     // TODO! (and save the GPU PPR values into the "pr" array)
+    /*while(frontier.size() > 0) {
+
+    }*/
+    // compute the dimension of the frontier
+    dim_frontier = 1;
+    int n_blocks = ceil(dim_frontier/1024) + 1;
+    update_pi0_and_r<<<n_blocks, ceil(dim_frontier/n_blocks)+1>>>(frontier, alpha, pi0_d, residues_d, dim_frontier);
+    update_frontiers();
+
 }
 
 void PersonalizedPageRank::cpu_validation(int iter)
