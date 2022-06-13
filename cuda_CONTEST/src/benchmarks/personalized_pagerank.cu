@@ -74,7 +74,7 @@ __global__ void update_pi0_and_r(int *frontier_d, double alpha, double *pi0_d, d
 }
 
 //  TODO change this function because it doesn't work
-__global__ void compute_new_frontier(double *r_d, double rmax, bool *flags_d, int *outdegrees, double alpha, int *out_neighbors, int tot_neighbors)
+__global__ void compute_new_frontier(double *r_d, double rmax, bool *flags_d, int *outdegrees, double alpha, int *out_neighbors, int tot_neighbors, int dim_frontier)
 {
     /*for(int j = blockIdx.x * blockDim.x + threadIdx.x; j < tot_neighbors ; j += blockDim.x * gridDim.x) {
         if(outdegrees[j] > 0){
@@ -88,7 +88,7 @@ __global__ void compute_new_frontier(double *r_d, double rmax, bool *flags_d, in
             r_d[out_neighbors[j]] = 0;
         }
     }*/
-    for (int j = blockIdx.x * blockDim.x + threadIdx.x; j < tot_neighbors; j += blockDim.x)
+    for (int j = blockIdx.x * blockDim.x + threadIdx.x; j < dim_frontier; j += blockDim.x)
     {
         if (outdegrees[j] > 0)
         {
@@ -100,8 +100,8 @@ __global__ void compute_new_frontier(double *r_d, double rmax, bool *flags_d, in
             int idx = neighbor_idx;
             while (idx < neighbor_idx + outdegrees[j])
             {
-                printf("residue considered = %lf\n", r_d[j]);
                 r_d[out_neighbors[idx]] += (1 - alpha) * r_d[out_neighbors[j]] / outdegrees[j];
+                //printf("residue considered = %lf\n ", r_d[out_neighbors[idx]]);
                 if (r_d[out_neighbors[idx]] > rmax && flags_d[out_neighbors[idx]] != true)
                 {
                     __syncthreads();
@@ -129,8 +129,10 @@ void PersonalizedPageRank::update_frontiers()
     int *outdegrees;
     /* one outdegree for each member of the frontier */
     err = cudaMallocManaged(&outdegrees, sizeof(int) * dim_frontier);
+    printf("\nDim frontier = %d\n", dim_frontier);
     for (int i = 0; i < dim_frontier; i++)
     {
+        printf("node in the frontier = %d\n", frontier[i]);
         int start_idx = neighbor_start_idx[frontier[i]];
         int end_idx = neighbor_start_idx[frontier[i] + 1];
         // outdegree computation
@@ -156,16 +158,19 @@ void PersonalizedPageRank::update_frontiers()
     }
     /* --- Update of the frontier --- */
     // int new_frontier_dim = 3*dim_frontier;
-    int new_frontier_dim = 3 * dim_frontier;
-    int *new_frontier = (int *)malloc(new_frontier_dim * sizeof(int));
+    // int new_frontier_dim = 30 * dim_frontier;
+    // int *new_frontier;
+    /* --- For simplicity I allocate a frontier that is long the number of vertex --- */
+    err = cudaMallocManaged(&new_frontier, sizeof(int)*V);
+    //int *new_frontier = (int *)malloc(new_frontier_dim * sizeof(int));
 
     /* For each out_neighbor updates the residue and checks if it has to be added to the frontier */
     // compute_new_frontier<<<ceil(tot_neighbors/1024)+1, ceil(tot_neighbors/ceil(tot_neighbors/1024))+1>>>(residues_d, rmax, flags_d, outdegrees, alpha, out_neighbors, tot_neighbors);
 
-    n_blocks = ceil(tot_neighbors/1024) +1;
-    n_threads = ceil(tot_neighbors/n_blocks) +1;
+    int n_blocks = ceil(tot_neighbors/1024) +1;
+    int n_threads = ceil(tot_neighbors/n_blocks) +1;
     cudaMemcpy(flags_d, flags, sizeof(bool) * V, cudaMemcpyHostToDevice);
-    compute_new_frontier<<<1, 1>>>(residues_d, rmax, flags_d, outdegrees, alpha, out_neighbors, tot_neighbors);
+    compute_new_frontier<<<1, 1>>>(residues_d, rmax, flags_d, outdegrees, alpha, out_neighbors, tot_neighbors, dim_frontier);
     CHECK(cudaDeviceSynchronize());
     cudaMemcpy(flags, flags_d, sizeof(bool) * V, cudaMemcpyDeviceToHost);
     
@@ -174,11 +179,12 @@ void PersonalizedPageRank::update_frontiers()
     {
         if (flags[i] == true)
         {
+          /*
           if(idx_frontier >= new_frontier_dim){
             new_frontier_dim = 3 * new_frontier_dim;
             new_frontier = (int *)realloc(new_frontier, new_frontier_dim * sizeof(int));
             printf("--- realloc done --- \n");
-          }
+          }*/
             new_frontier[idx_frontier] = i;
             idx_frontier++;
         }
@@ -187,12 +193,12 @@ void PersonalizedPageRank::update_frontiers()
     /* -- Check the flag -- */
 
     // cudaFree(frontier);
-    frontier = new_frontier;
-    dim_frontier = idx_frontier;
+    // frontier = new_frontier;
+    new_dim_frontier = idx_frontier;
     std::cout << "----- Updated frontier -----\n";
-    for (int i = 0; i < dim_frontier; i++)
+    for (int i = 0; i < new_dim_frontier; i++)
     {
-        std::cout << frontier[i] << " ";
+        std::cout << new_frontier[i] << " ";
     }
 }
 
@@ -380,23 +386,32 @@ void PersonalizedPageRank::execute(int iter)
     }*/
     // compute the dimension of the frontier
     dim_frontier = 1;
-    int dim_frontier_old; // used to update pi0 and r
+    //int dim_frontier_old; // used to update pi0 and r
   
-    while(dim_frontier>0){
-      n_blocks = ceil(dim_frontier / 1024) + 1;
-      n_threads = ceil(dim_frontier / n_blocks) + 1;
-      CHECK(cudaDeviceSynchronize());
-      dim_frontier_old = dim_frontier;
+    while(dim_frontier > 0){
+      //int n_blocks = ceil(dim_frontier / 1024) + 1;
+      //int n_threads = ceil(dim_frontier / n_blocks) + 1;
+      //CHECK(cudaDeviceSynchronize());
+      //dim_frontier_old = dim_frontier;
       update_frontiers();
       CHECK(cudaDeviceSynchronize());
-      update_pi0_and_r<<<n_blocks, n_threads>>>(frontier, alpha, pi0_d, residues_d, dim_frontier_old);
+      update_pi0_and_r<<<1,1>>>(frontier, alpha, pi0_d, residues_d, dim_frontier);
       CHECK(cudaDeviceSynchronize());
+      frontier = new_frontier;
+      dim_frontier = new_dim_frontier;
     }
+    pi0 = (double*)malloc(sizeof(double)*V);
+    cudaMemcpy(pi0, pi0_d, sizeof(double)*V, cudaMemcpyDeviceToHost);
+    printf("\n--- Estimated pi ---\n");
+    for(int i = 0; i < V; i++) {
+      //printf("pi_(%d) = %lf\n", i, pi0[i]);
+      pr[i] = pi0[i];
+    }
+
 }
 
 void PersonalizedPageRank::cpu_validation(int iter)
 {
-
     // Reset the CPU PageRank vector (uniform initialization, 1 / V for each vertex);
     std::fill(pr_golden.begin(), pr_golden.end(), 1.0 / V);
 
@@ -408,6 +423,7 @@ void PersonalizedPageRank::cpu_validation(int iter)
     std::cout << "exec time CPU=" << double(exec_time) / 1000 << " ms" << std::endl;
 
     // Obtain the vertices with highest PPR value;
+
     std::vector<std::pair<int, double>> sorted_pr_tuples = sort_pr(pr.data(), V);
     std::vector<std::pair<int, double>> sorted_pr_golden_tuples = sort_pr(pr_golden.data(), V);
 
