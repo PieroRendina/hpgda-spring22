@@ -161,10 +161,13 @@ class PersonalizedPageRank : public Benchmark {
     std::vector<float> degree;
 
     int count_;
+
+    // Structures for CSR representation on GPU
     int * verteces_d;
     int * neighbor_start_idx_d;
     int * neighbors_d;
-
+    
+    // Structures for CSR representation on CPU
     int * verteces;
     int * neighbor_start_idx;
     int * neighbors;
@@ -177,9 +180,13 @@ class PersonalizedPageRank : public Benchmark {
     // Frontiers
     int dim_frontier;
     int * frontier;
-    // Flag to state whether a node is in the frontier;
+    // Flag to state whether a node is in the frontier
+    bool * flags_d;
     bool * flags;
-
+    int * frontier_d;
+    int n_blocks;
+    int n_threads;
+    
     void initialize_graph();
     void update_frontiers();
 };
