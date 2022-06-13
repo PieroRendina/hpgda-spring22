@@ -28,102 +28,14 @@
 // OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
 #pragma once
-#include <unordered_set>
-#include <iterator>
-#include <list>
-#include <vector>
+#include "cublas_v2.h"
 #include "../benchmark.cuh"
 
-// CPU Utility functions;
-
-inline void spmv_coo_cpu(const int *x, const int *y, const double *val, const double *vec, double *result, int N) {
-    for (int i = 0; i < N; i++) {
-        result[x[i]] += val[i] * vec[y[i]];
-    }
-}
-
-inline double dot_product_cpu(const int *a, const double *b, const int N) {
-    double result = 0;
-    for (int i = 0; i < N; i++) {
-        result += a[i] * b[i];
-    }
-    return result;
-}
-
-inline void axpb_personalized_cpu(
-    double alpha, double *x, double beta,
-    const int personalization_vertex, double *result, const int N) {
-    double one_minus_alpha = 1 - alpha;
-    for (int i = 0; i < N; i++) {
-        result[i] = alpha * x[i] + beta + ((personalization_vertex == i) ? one_minus_alpha : 0.0);
-    }
-}
-
-inline double euclidean_distance_cpu(const double *x, const double *y, const int N) {
-    double result = 0;
-    for (int i = 0; i < N; i++) {
-        double tmp = x[i] - y[i];
-        result += tmp * tmp;
-    }
-    return std::sqrt(result);
-}
-
-inline void personalized_pagerank_cpu(
-    const int *x,
-    const int *y,
-    const double *val,
-    const int V, 
-    const int E,
-    double *pr,
-    const int *dangling_bitmap, 
-    const int personalization_vertex,
-    double alpha=DEFAULT_ALPHA,
-    double convergence_threshold=DEFAULT_CONVERGENCE,
-    const int max_iterations=DEFAULT_MAX_ITER) {
-
-    // Temporary PPR result;
-    double *pr_tmp = (double *) malloc(sizeof(double) * V);
-
-    int iter = 0;
-    bool converged = false;
-    while (!converged && iter < max_iterations) {    
-        memset(pr_tmp, 0, sizeof(double) * V);
-        spmv_coo_cpu(x, y, val, pr, pr_tmp, E);
-        double dangling_factor = dot_product_cpu(dangling_bitmap, pr, V); 
-        axpb_personalized_cpu(alpha, pr_tmp, alpha * dangling_factor / V, personalization_vertex, pr_tmp, V);
-
-        // Check convergence;
-        double err = euclidean_distance_cpu(pr, pr_tmp, V);
-        converged = err <= convergence_threshold;
-
-        // Update the PageRank vector;
-        memcpy(pr, pr_tmp, sizeof(double) * V);
-        iter++;
-    }
-    free(pr_tmp);
-}
-
-inline std::vector<std::pair<int, double>> sort_pr(double *pr, int V) {
-	std::vector<std::pair<int, double>> sorted_pr;
-    // Associate PR values to the vertex indices;
-	for (int i = 0; i < V; i++) {
-		sorted_pr.push_back( { i, pr[i] });
-	}
-    // Sort the tuples (vertex, PR) by decreasing value of PR;
-	std::sort(sorted_pr.begin(), sorted_pr.end(), [](const std::pair<int, double> &l, const std::pair<int, double> &r) {
-		if (l.second != r.second) return l.second > r.second;
-		else return l.first > r.first;
-	});
-	return sorted_pr;
-}
-
-class PersonalizedPageRank : public Benchmark {
+class MatrixMultiplication : public Benchmark {
    public:
-    PersonalizedPageRank(Options &options) : Benchmark(options) {
-        alpha = options.alpha;
-        max_iterations = options.maximum_iterations;
-        convergence_threshold = options.convergence_threshold;
-        graph_file_path = options.graph;
+    MatrixMultiplication(Options &options) : Benchmark(options) {
+        // Create cuBLAS handle;
+        cublasCreate(&handle);
     }
     void alloc();
     void init();
@@ -133,60 +45,16 @@ class PersonalizedPageRank : public Benchmark {
     void cpu_validation(int iter);
     std::string print_result(bool short_form = false);
 
-    // CPU Utility functions
-    void initialize_csr();
-
    private:
-    int V = 0;
-    int E = 0;
-    std::vector<int> x;       // Source coordinate of edges in graph;
-    std::vector<int> y;       // Destination coordinate of edges in graph;
-    std::vector<double> val;  // Used for matrix value, initially all values are 1;
-    std::vector<int> dangling;
-    std::vector<double> pr;   // Store here the PageRank values computed by the GPU;
-    std::vector<double> pr_golden;  // PageRank values computed by the CPU;
-    int personalization_vertex = 0;
-    double convergence_threshold = DEFAULT_CONVERGENCE;
-    double alpha = DEFAULT_ALPHA;
-    int max_iterations = DEFAULT_MAX_ITER;
-    int topk_vertices = 20;   // Number of highest-ranked vertices to look for;
-    double precision = 0;     // How many top-20 vertices are correctly retrieved;
-    std::string graph_file_path = DEFAULT_GRAPH;
+    double *x, *y, *z;
+    double *x_d, *y_d, *z_d;
+    double gpu_checksum = 0;
+    int B = 0;
+    cublasHandle_t handle;  
 
-    // Variables added by us
-    double rmax; // The global residue threshold for forward push
-    double failure_probability = 0.2; // Failure Probability -> initially we are asking for accuracy = 0.8
-    double threshold;
-    std::vector<std::list<int>> adjacency_list;
-    std::vector<float> degree;
-
-    int count_;
-
-    // Structures for CSR representation on GPU
-    int * verteces_d;
-    int * neighbor_start_idx_d;
-    int * neighbors_d;
-    
-    // Structures for CSR representation on CPU
-    int * verteces;
-    int * neighbor_start_idx;
-    int * neighbors;
-
-    // Residues values during forward push
-    double * residues_d;
-    // Reserve values during forward push
-    double * pi0_d;
-
-    // Frontiers
-    int dim_frontier;
-    int * frontier;
-    // Flag to state whether a node is in the frontier
-    bool * flags_d;
-    bool * flags;
-    int * frontier_d;
-    int n_blocks;
-    int n_threads;
-    
-    void initialize_graph();
-    void update_frontiers();
+    // Implementations of the algorithm;
+    void matrix_multiplication_0(int iter);
+    void matrix_multiplication_1(int iter);
+    void matrix_multiplication_2(int iter);
+    void matrix_multiplication_3(int iter);
 };
