@@ -176,17 +176,18 @@ class PersonalizedPageRank : public Benchmark {
     double * residues_d;
     // Reserve values during forward push
     double * pi0_d;
+    double * pi0;
 
     // Frontiers
     int dim_frontier;
     int * frontier;
+    int * new_frontier;
+    int new_dim_frontier;
     // Flag to state whether a node is in the frontier
     bool * flags_d;
     bool * flags;
     int * frontier_d;
-    int n_blocks;
-    int n_threads;
-    
+
     void initialize_graph();
     void update_frontiers();
 };
