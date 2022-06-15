@@ -36,15 +36,19 @@
 
 // CPU Utility functions;
 
-inline void spmv_coo_cpu(const int *x, const int *y, const double *val, const double *vec, double *result, int N) {
-    for (int i = 0; i < N; i++) {
+inline void spmv_coo_cpu(const int *x, const int *y, const double *val, const double *vec, double *result, int N)
+{
+    for (int i = 0; i < N; i++)
+    {
         result[x[i]] += val[i] * vec[y[i]];
     }
 }
 
-inline double dot_product_cpu(const int *a, const double *b, const int N) {
+inline double dot_product_cpu(const int *a, const double *b, const int N)
+{
     double result = 0;
-    for (int i = 0; i < N; i++) {
+    for (int i = 0; i < N; i++)
+    {
         result += a[i] * b[i];
     }
     return result;
@@ -52,16 +56,20 @@ inline double dot_product_cpu(const int *a, const double *b, const int N) {
 
 inline void axpb_personalized_cpu(
     double alpha, double *x, double beta,
-    const int personalization_vertex, double *result, const int N) {
+    const int personalization_vertex, double *result, const int N)
+{
     double one_minus_alpha = 1 - alpha;
-    for (int i = 0; i < N; i++) {
+    for (int i = 0; i < N; i++)
+    {
         result[i] = alpha * x[i] + beta + ((personalization_vertex == i) ? one_minus_alpha : 0.0);
     }
 }
 
-inline double euclidean_distance_cpu(const double *x, const double *y, const int N) {
+inline double euclidean_distance_cpu(const double *x, const double *y, const int N)
+{
     double result = 0;
-    for (int i = 0; i < N; i++) {
+    for (int i = 0; i < N; i++)
+    {
         double tmp = x[i] - y[i];
         result += tmp * tmp;
     }
@@ -72,24 +80,26 @@ inline void personalized_pagerank_cpu(
     const int *x,
     const int *y,
     const double *val,
-    const int V, 
+    const int V,
     const int E,
     double *pr,
-    const int *dangling_bitmap, 
+    const int *dangling_bitmap,
     const int personalization_vertex,
-    double alpha=DEFAULT_ALPHA,
-    double convergence_threshold=DEFAULT_CONVERGENCE,
-    const int max_iterations=DEFAULT_MAX_ITER) {
+    double alpha = DEFAULT_ALPHA,
+    double convergence_threshold = DEFAULT_CONVERGENCE,
+    const int max_iterations = DEFAULT_MAX_ITER)
+{
 
     // Temporary PPR result;
-    double *pr_tmp = (double *) malloc(sizeof(double) * V);
+    double *pr_tmp = (double *)malloc(sizeof(double) * V);
 
     int iter = 0;
     bool converged = false;
-    while (!converged && iter < max_iterations) {    
+    while (!converged && iter < max_iterations)
+    {
         memset(pr_tmp, 0, sizeof(double) * V);
         spmv_coo_cpu(x, y, val, pr, pr_tmp, E);
-        double dangling_factor = dot_product_cpu(dangling_bitmap, pr, V); 
+        double dangling_factor = dot_product_cpu(dangling_bitmap, pr, V);
         axpb_personalized_cpu(alpha, pr_tmp, alpha * dangling_factor / V, personalization_vertex, pr_tmp, V);
 
         // Check convergence;
@@ -103,23 +113,27 @@ inline void personalized_pagerank_cpu(
     free(pr_tmp);
 }
 
-inline std::vector<std::pair<int, double>> sort_pr(double *pr, int V) {
-	std::vector<std::pair<int, double>> sorted_pr;
+inline std::vector<std::pair<int, double>> sort_pr(double *pr, int V)
+{
+    std::vector<std::pair<int, double>> sorted_pr;
     // Associate PR values to the vertex indices;
-	for (int i = 0; i < V; i++) {
-		sorted_pr.push_back( { i, pr[i] });
-	}
+    for (int i = 0; i < V; i++)
+    {
+        sorted_pr.push_back({i, pr[i]});
+    }
     // Sort the tuples (vertex, PR) by decreasing value of PR;
-	std::sort(sorted_pr.begin(), sorted_pr.end(), [](const std::pair<int, double> &l, const std::pair<int, double> &r) {
+    std::sort(sorted_pr.begin(), sorted_pr.end(), [](const std::pair<int, double> &l, const std::pair<int, double> &r)
+              {
 		if (l.second != r.second) return l.second > r.second;
-		else return l.first > r.first;
-	});
-	return sorted_pr;
+		else return l.first > r.first; });
+    return sorted_pr;
 }
 
-class PersonalizedPageRank : public Benchmark {
-   public:
-    PersonalizedPageRank(Options &options) : Benchmark(options) {
+class PersonalizedPageRank : public Benchmark
+{
+public:
+    PersonalizedPageRank(Options &options) : Benchmark(options)
+    {
         alpha = options.alpha;
         max_iterations = options.maximum_iterations;
         convergence_threshold = options.convergence_threshold;
@@ -136,58 +150,66 @@ class PersonalizedPageRank : public Benchmark {
     // CPU Utility functions
     void initialize_csr();
 
-   private:
+private:
     int V = 0;
     int E = 0;
-    std::vector<int> x;       // Source coordinate of edges in graph;
-    std::vector<int> y;       // Destination coordinate of edges in graph;
-    std::vector<double> val;  // Used for matrix value, initially all values are 1;
+    std::vector<int> x;      // Source coordinate of edges in graph;
+    std::vector<int> y;      // Destination coordinate of edges in graph;
+    std::vector<double> val; // Used for matrix value, initially all values are 1;
     std::vector<int> dangling;
-    std::vector<double> pr;   // Store here the PageRank values computed by the GPU;
-    std::vector<double> pr_golden;  // PageRank values computed by the CPU;
+    std::vector<double> pr;        // Store here the PageRank values computed by the GPU;
+    std::vector<double> pr_golden; // PageRank values computed by the CPU;
     int personalization_vertex = 0;
     double convergence_threshold = DEFAULT_CONVERGENCE;
     double alpha = DEFAULT_ALPHA;
     int max_iterations = DEFAULT_MAX_ITER;
-    int topk_vertices = 20;   // Number of highest-ranked vertices to look for;
-    double precision = 0;     // How many top-20 vertices are correctly retrieved;
+    int topk_vertices = 20; // Number of highest-ranked vertices to look for;
+    double precision = 0;   // How many top-20 vertices are correctly retrieved;
     std::string graph_file_path = DEFAULT_GRAPH;
 
     // Variables added by us
     double rmax; // The global residue threshold for forward push
+    double rsum;
+    double w;
     double failure_probability = 0.2; // Failure Probability -> initially we are asking for accuracy = 0.8
     double threshold;
     std::vector<std::list<int>> adjacency_list;
     std::vector<float> degree;
 
     int count_;
+    int * outdegrees;
 
     // Structures for CSR representation on GPU
-    int * verteces_d;
-    int * neighbor_start_idx_d;
-    int * neighbors_d;
-    
+    int *verteces_d;
+    int *neighbor_start_idx_d;
+    int *neighbors_d;
+
     // Structures for CSR representation on CPU
-    int * verteces;
-    int * neighbor_start_idx;
-    int * neighbors;
+    int *verteces;
+    int *neighbor_start_idx;
+    int *neighbors;
 
     // Residues values during forward push
-    double * residues_d;
+    double *residues_d;
+    double *residues;
+    double *positive_residues;
+
     // Reserve values during forward push
-    double * pi0_d;
-    double * pi0;
+    double *pi0_d;
+    double *pi0;
 
     // Frontiers
     int dim_frontier;
-    int * frontier;
-    int * new_frontier;
+    int *frontier;
+    int *new_frontier;
     int new_dim_frontier;
     // Flag to state whether a node is in the frontier
-    bool * flags_d;
-    bool * flags;
-    int * frontier_d;
+    bool *flags_d;
+    bool *flags;
+    int *frontier_d;
 
     void initialize_graph();
+    void initialize_outdegrees();
     void update_frontiers();
+    //void random_walks();
 };
