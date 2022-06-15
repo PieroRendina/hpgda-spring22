@@ -74,7 +74,7 @@ __global__ void update_pi0_and_r(int *frontier_d, double alpha, double *pi0_d, d
 }
 
 //  TODO change this function because it doesn't work
-__global__ void compute_new_frontier(double *r_d, double rmax, bool *flags_d, int *outdegrees, double alpha, int *out_neighbors, int tot_neighbors, int dim_frontier)
+__global__ void compute_new_frontier(double *r_d, double rmax, bool *flags_d, int *outdegrees, double alpha, int *out_neighbors, int tot_neighbors, int * frontier, int dim_frontier)
 {
     /*for(int j = blockIdx.x * blockDim.x + threadIdx.x; j < tot_neighbors ; j += blockDim.x * gridDim.x) {
         if(outdegrees[j] > 0){
@@ -100,12 +100,15 @@ __global__ void compute_new_frontier(double *r_d, double rmax, bool *flags_d, in
             int idx = neighbor_idx;
             while (idx < neighbor_idx + outdegrees[j])
             {
-                r_d[out_neighbors[idx]] += (1 - alpha) * r_d[out_neighbors[j]] / outdegrees[j];
+                // changed out_neighbors[j] in frontier[j]
+                r_d[out_neighbors[idx]] += (1 - alpha) * r_d[frontier[j]] / outdegrees[j];
                 // printf("residue considered = %lf\n", r_d[out_neighbors[idx]]);
-                if (r_d[out_neighbors[idx]] > rmax && flags_d[out_neighbors[idx]] != true)
-                {
-                    __syncthreads();
-                    flags_d[out_neighbors[idx]] = true;
+                if(outdegrees[out_neighbors[idx]] > 0) {
+                    if (r_d[out_neighbors[idx]]/outdegrees[out_neighbors[idx]] > rmax && flags_d[out_neighbors[idx]] != true)
+                    {
+                        __syncthreads();
+                        flags_d[out_neighbors[idx]] = true;
+                    }
                 }
                 idx++;
             }
@@ -117,8 +120,50 @@ __global__ void compute_new_frontier(double *r_d, double rmax, bool *flags_d, in
     }
 }
 
+
+__global__ void random_walks(double rsum, double w, double *pi0_d, int tot_nodes)
+{
+    for (int i = blockIdx.x * blockDim.x + threadIdx.x; i < tot_nodes; i += blockDim.x * gridDim.x)
+    {
+        printf("called");
+        /*
+        double wi = ceil(residues_d[i] * w / rsum);
+        printf("wi = %lf at iteration %d", wi, i);
+        double ai = (residues_d[i] * w) / (rsum * wi);
+
+        for (int j = 0; j < wi; j++)
+        {
+            // compute monte carlo
+            // pi0_d[i] += ai*rsum/w
+        }
+        */
+    }
+}
+
 //////////////////////////////
+/* CPU function */
 //////////////////////////////
+
+
+
+void PersonalizedPageRank::initialize_outdegrees() {
+    for (int i = 0; i < V; i++)
+    {   
+        // printf("node in the frontier = %d\n", frontier[i]);
+        int start_idx = neighbor_start_idx[i];
+        int end_idx = neighbor_start_idx[i + 1];
+        // outdegree computation
+        outdegrees[i] = end_idx - start_idx;
+        // the node is dropped from the frontier
+        flags[frontier[i]] = false;
+    }
+
+    for(int i = 0; i < V; i++) {
+        printf("Outdegree of node %d = %d\n", i, outdegrees[i]);
+    }
+}
+
+
 
 void PersonalizedPageRank::update_frontiers()
 {
@@ -126,18 +171,20 @@ void PersonalizedPageRank::update_frontiers()
     /* --- Compute the number of neighbors and drop the nodes from the frontier --- */
     // allocate the vector to store the degree of each node in the frontier
     int tot_neighbors = 0;
-    int *outdegrees;
-    /* one outdegree for each member of the frontier */
+    //int *outdegrees;
+    /* 
+    one outdegree for each member of the frontier 
     err = cudaMallocManaged(&outdegrees, sizeof(int) * dim_frontier);
-    // printf("\nDim frontier = %d\n", dim_frontier);
+    printf("\nDim frontier = %d\n", dim_frontier);
+    */
     for (int i = 0; i < dim_frontier; i++)
     {
         // printf("node in the frontier = %d\n", frontier[i]);
-        int start_idx = neighbor_start_idx[frontier[i]];
-        int end_idx = neighbor_start_idx[frontier[i] + 1];
+        //int start_idx = neighbor_start_idx[frontier[i]];
+        //int end_idx = neighbor_start_idx[frontier[i] + 1];
         // outdegree computation
-        outdegrees[i] = end_idx - start_idx;
-        tot_neighbors += outdegrees[i];
+        //outdegrees[i] = end_idx - start_idx;
+        tot_neighbors += outdegrees[frontier[i]];
         // the node is dropped from the frontier
         flags[frontier[i]] = false;
     }
@@ -170,7 +217,7 @@ void PersonalizedPageRank::update_frontiers()
     int n_blocks = ceil(tot_neighbors / 1024) + 1;
     int n_threads = ceil(tot_neighbors / n_blocks) + 1;
     cudaMemcpy(flags_d, flags, sizeof(bool) * V, cudaMemcpyHostToDevice);
-    compute_new_frontier<<<n_blocks, n_threads>>>(residues_d, rmax, flags_d, outdegrees, alpha, out_neighbors, tot_neighbors, dim_frontier);
+    compute_new_frontier<<<n_blocks, n_threads>>>(residues_d, rmax, flags_d, outdegrees, alpha, out_neighbors, tot_neighbors, frontier, dim_frontier);
     CHECK(cudaDeviceSynchronize());
     cudaMemcpy(flags, flags_d, sizeof(bool) * V, cudaMemcpyDeviceToHost);
 
@@ -247,7 +294,7 @@ void PersonalizedPageRank::initialize_csr()
         {
             std::cout << neighbors[i] << " ";
         }
-        */
+    */
 }
 
 // CPU Utility functions;
@@ -315,12 +362,15 @@ void PersonalizedPageRank::alloc()
     // Load the input graph and preprocess it;
     initialize_graph();
     initialize_csr();
+    
 
     // allocate the mask to store the status of the nodes in the frontier (all false by default)
     flags = (bool *)calloc(V, sizeof(bool));
     // at the beginning the frontier contains just the personalization vertex
     // frontier = (int *)malloc(sizeof(int));
     err = cudaMallocManaged(&frontier, sizeof(int));
+    err = cudaMallocManaged(&outdegrees, sizeof(int)*V);
+    initialize_outdegrees();
 
     // Allocate any GPU data here;
     // TODO!
@@ -407,13 +457,47 @@ void PersonalizedPageRank::execute(int iter)
     }
     pi0 = (double *)malloc(sizeof(double) * V);
     cudaMemcpy(pi0, pi0_d, sizeof(double) * V, cudaMemcpyDeviceToHost);
-    // printf("\n--- Estimated pi ---\n");
 
+    // New part --->
+    residues = (double *)malloc(sizeof(double) * V);
+    cudaMemcpy(residues, residues_d, sizeof(double) * V, cudaMemcpyDeviceToHost);
+
+    int count_positive_residues = 0;
+    positive_residues = (double *)malloc(sizeof(int) * V);
+
+    // compute rsum and save in an array all the nodes with positive residues
+    for (int i = 0; i < V; i++)
+    {
+        if (residues[i] > 0)
+        {
+            rsum += residues[i];
+            positive_residues[count_positive_residues] = i;
+            count_positive_residues++;
+        }
+    }
+
+    // adjust the size
+    positive_residues = (double *)realloc(positive_residues, count_positive_residues);
+    // printf("positive_resiudes_size = %d \n", positive_residues.size());
+    w = rsum * ((2 * convergence_threshold / 3 + 2) * log(2.0 / failure_probability) / (convergence_threshold * convergence_threshold * threshold));
+
+    // for every node in positive_residue instantiate a thread on the GPU and compute the random walks
+
+    cudaMemcpy(pi0_d, pi0, sizeof(double) * V, cudaMemcpyHostToDevice); // i'm not sure that this step is necessary
+    cudaMemcpy(residues_d, residues, sizeof(double) * V, cudaMemcpyHostToDevice);
+    int n_blocks = ceil(count_positive_residues / 1024) + 1;
+    int n_threads = ceil(count_positive_residues / n_blocks) + 1;
+    random_walks<<<n_blocks, n_threads>>>(rsum, w, pi0_d, count_positive_residues);
+
+    // End new part <----
+
+    // printf("\n--- Estimated pi ---\n");
     for (int i = 0; i < V; i++)
     {
         // printf("pi_(%d) = %lf\n", i, pi0[i]);
         pr[i] = pi0[i];
     }
+
 }
 
 void PersonalizedPageRank::cpu_validation(int iter)
