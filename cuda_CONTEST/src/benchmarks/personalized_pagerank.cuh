@@ -163,8 +163,8 @@ private:
     double convergence_threshold = DEFAULT_CONVERGENCE;
     double alpha = DEFAULT_ALPHA;
     int max_iterations = DEFAULT_MAX_ITER;
-    int topk_vertices = 20; // Number of highest-ranked vertices to look for;
-    double precision = 0;   // How many top-20 vertices are correctly retrieved;
+    int topk_vertices = 20; // Number of highest-ranked verteces to look for;
+    double precision = 0;   // How many top-20 verteces are correctly retrieved;
     std::string graph_file_path = DEFAULT_GRAPH;
 
     // Variables added by us
@@ -212,4 +212,9 @@ private:
     void initialize_outdegrees();
     void update_frontiers();
     //void random_walks();
+
+    // variables to support parallel csr creation
+    int ** out_neighbors;
+    int * x_d;
+    int * y_d;
 };
