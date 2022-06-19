@@ -165,6 +165,7 @@ void PersonalizedPageRank::initialize_outdegrees()
         // the node is dropped from the frontier
         flags[frontier[i]] = false;
     }
+    flags[frontier[V]] = false;
 }
 
 void PersonalizedPageRank::update_frontiers()
@@ -315,12 +316,13 @@ void PersonalizedPageRank::initialize_csr()
         /*auto end = std::chrono::system_clock::now();
         std::chrono::duration<double> elapsed_seconds = end-start;
         printf("Iteration done in %f\n", elapsed_seconds.count());*/
-        initialize_outdegrees();
+        
     }
-
+    initialize_outdegrees();
+/*
     printf("\n --- Finished CSR initialization --- \n");
 
-    /*std::cout << "----- Outdegrees -----\n";
+    std::cout << "----- Outdegrees -----\n";
         for (int i = 0; i < V ; i++)
         {
             std::cout << outdegrees[i] << " ";
@@ -330,66 +332,56 @@ void PersonalizedPageRank::initialize_csr()
         {
             std::cout << neighbor_start_idx[i] << " ";
         }
-    */
+    
     std::cout << "\n----- Neighbours -----\n";
     for (int i = 0; i < E; i++)
     {
         std::cout << neighbors[i] << " ";
-    }
+    }*/
 }
 
 // CPU Utility functions;
 
 // Read the input graph and initialize it;
-void PersonalizedPageRank::initialize_graph()
-{
+void PersonalizedPageRank::initialize_graph() {
     // Read the graph from an MTX file;
     int num_rows = 0;
     int num_columns = 0;
     read_mtx(graph_file_path.c_str(), &x, &y, &val,
-             &num_rows, &num_columns, &E, // Store the number of vertices (row and columns must be the same value), and edges;
-             true,                        // If true, read edges TRANSPOSED, i.e. edge (2, 3) is loaded as (3, 2). We set this true as it simplifies the PPR computation;
-             false,                       // If true, read the third column of the matrix file. If false, set all values to 1 (this is what you want when reading a graph topology);
-             debug,
-             false, // MTX files use indices starting from 1. If for whatever reason your MTX files uses indices that start from 0, set zero_indexed_file=true;
-             true   // If true, sort the edges in (x, y) order. If you have a sorted MTX file, turn this to false to make loading faster;
+        &num_rows, &num_columns, &E, // Store the number of vertices (row and columns must be the same value), and edges;
+        true,                        // If true, read edges TRANSPOSED, i.e. edge (2, 3) is loaded as (3, 2). We set this true as it simplifies the PPR computation;
+        false,                       // If true, read the third column of the matrix file. If false, set all values to 1 (this is what you want when reading a graph topology);
+        debug,                 
+        false,                       // MTX files use indices starting from 1. If for whatever reason your MTX files uses indices that start from 0, set zero_indexed_file=true;
+        true                         // If true, sort the edges in (x, y) order. If you have a sorted MTX file, turn this to false to make loading faster;
     );
-    if (num_rows != num_columns)
-    {
-        if (debug)
-            std::cout << "error, the matrix is not squared, rows=" << num_rows << ", columns=" << num_columns << std::endl;
+    if (num_rows != num_columns) {
+        if (debug) std::cout << "error, the matrix is not squared, rows=" << num_rows << ", columns=" << num_columns << std::endl;
         exit(-1);
-    }
-    else
-    {
+    } else {
         V = num_rows;
     }
-    if (debug)
-        std::cout << "loaded graph, |V|=" << V << ", |E|=" << E << std::endl;
+    if (debug) std::cout << "loaded graph, |V|=" << V << ", |E|=" << E << std::endl;
 
     // Compute the dangling vector. A vertex is not dangling if it has at least 1 outgoing edge;
     dangling.resize(V);
-    std::fill(dangling.begin(), dangling.end(), 1); // Initially assume all vertices to be dangling;
-    for (int i = 0; i < E; i++)
-    {
+    std::fill(dangling.begin(), dangling.end(), 1);  // Initially assume all vertices to be dangling;
+    for (int i = 0; i < E; i++) {
         // Ignore self-loops, a vertex is still dangling if it has only self-loops;
-        if (x[i] != y[i])
-            dangling[y[i]] = 0;
+        if (x[i] != y[i]) dangling[y[i]] = 0;
     }
     // Initialize the CPU PageRank vector;
     pr.resize(V);
     pr_golden.resize(V);
     // Initialize the value vector of the graph (1 / outdegree of each vertex).
     // Count how many edges start in each vertex (here, the source vertex is y as the matrix is transposed);
-    int *outdegree = (int *)calloc(V, sizeof(int));
-    for (int i = 0; i < E; i++)
-    {
+    int *outdegree = (int *) calloc(V, sizeof(int));
+    for (int i = 0; i < E; i++) {
         outdegree[y[i]]++;
     }
     // Divide each edge value by the outdegree of the source vertex;
-    for (int i = 0; i < E; i++)
-    {
-        val[i] = 1.0 / outdegree[y[i]];
+    for (int i = 0; i < E; i++) {
+        val[i] = 1.0 / outdegree[y[i]];  
     }
     free(outdegree);
 }
@@ -403,6 +395,7 @@ void PersonalizedPageRank::alloc()
 
     // Load the input graph and preprocess it;
     initialize_graph();
+    
     // allocate the mask to store the status of the nodes in the frontier (all false by default)
     flags = (bool *)calloc(V, sizeof(bool));
     // at the beginning the frontier contains just the personalization vertex
@@ -418,9 +411,9 @@ void PersonalizedPageRank::alloc()
     printf("\n --- Finished parallel graph initialization --- \n");
     */
     // finish attempt
+    
 
     initialize_csr();
-
     // Allocate any GPU data here;
     // TODO!
 
@@ -438,6 +431,8 @@ void PersonalizedPageRank::alloc()
     /*double * personal_x = (double*)malloc(sizeof(double)*V);
     cudaMemcpy(personal_x, residues_d, sizeof(double)*V, cudaMemcpyDeviceToHost);
     std::cout << "\nValue of x = " << personal_x[0];*/
+
+    
 }
 
 // Initialize data;
