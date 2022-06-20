@@ -59,15 +59,12 @@ using clock_type = chrono::high_resolution_clock;
     }
 
 // Write GPU kernel here!
-
-// Change a value of an array
 __global__ void modify_device_array_value(double *device_array, int index, double value)
 {
     // residues[personalization_vertex] = 1.0;
     device_array[index] = value;
 }
 
-// Update reserve and residue
 __global__ void update_pi0_and_r(int *frontier_d, double alpha, double *pi0_d, double *r_d, int dim_frontier)
 {
     // compute the index of the vertex in the frontier
@@ -78,8 +75,8 @@ __global__ void update_pi0_and_r(int *frontier_d, double alpha, double *pi0_d, d
     }
 }
 
-// Update the residues and the frontier
-__global__ void compute_new_frontier(double *r_d, double rmax, bool *flags_d, int *outdegrees, double alpha, int *out_neighbors, int tot_neighbors, int *frontier, int dim_frontier)
+//  TODO change this function because it doesn't work
+__global__ void compute_new_frontier(double *r_d, double rmax, bool *flags_d, int *outdegrees, double alpha, int *out_neighbors, int tot_neighbors, int * frontier, int dim_frontier, double * rsum_d)
 {
     /*for(int j = blockIdx.x * blockDim.x + threadIdx.x; j < tot_neighbors ; j += blockDim.x * gridDim.x) {
         if(outdegrees[j] > 0){
@@ -103,12 +100,11 @@ __global__ void compute_new_frontier(double *r_d, double rmax, bool *flags_d, in
         int idx = neighbor_idx;
         while (idx < neighbor_idx + outdegrees[frontier[j]])
         {
-            // changed out_neighbors[j] in frontier[j]
+            // changed out_neighbors[j] in frontier[j] 
             r_d[out_neighbors[idx]] += (1 - alpha) * r_d[frontier[j]] / outdegrees[frontier[j]];
             // printf("residue considered = %lf\n", r_d[out_neighbors[idx]]);
-            if (outdegrees[out_neighbors[idx]] > 0)
-            {
-                if (r_d[out_neighbors[idx]] / outdegrees[out_neighbors[idx]] > rmax && flags_d[out_neighbors[idx]] != true)
+            if(outdegrees[out_neighbors[idx]] > 0) {
+                if (r_d[out_neighbors[idx]]/outdegrees[out_neighbors[idx]] > rmax && flags_d[out_neighbors[idx]] != true)
                 {
                     __syncthreads();
                     flags_d[out_neighbors[idx]] = true;
@@ -116,36 +112,41 @@ __global__ void compute_new_frontier(double *r_d, double rmax, bool *flags_d, in
             }
             idx++;
         }
+        // update of the rsum
+        atomicAdd(&rsum_d[0], -alpha*r_d[frontier[j]]);
+        //printf("value of rsum = %lf\n", rsum_d[0]);
     }
 }
 
-// Monte Carlo sampling
-__global__ void random_walks(double rsum, double w, double *pi0_d, int tot_nodes)
+
+__global__ void random_walks(double random_walks_factor, double w, double * pi0_d, double * residues_d, int tot_nodes, int * starting_nodes, int * outdegrees, int * neighbor_start_idx_d, double alpha)
 {
     int i = blockIdx.x * blockDim.x + threadIdx.x;
-    bool stop = false;
     curandState state;
     curand_init(0, i, 0, &state);
-    float result = curand_uniform(&state);
-    if (result > 0.15)
+    // iterate through all the starting nodes 
+    for ( ; i < tot_nodes; i += blockDim.x) 
     {
-        stop = true;
-    }
-    printf("tid = %d, result = %f\n", i, result);
-    for (; i < tot_nodes; i += blockDim.x * gridDim.x)
-    {
-
-        /*
-        double wi = ceil(residues_d[i] * w / rsum);
-        printf("wi = %lf at iteration %d", wi, i);
-        double ai = (residues_d[i] * w) / (rsum * wi);
-
-        for (int j = 0; j < wi; j++)
+        // compute the number of walks to do
+        //double wi = ceil(residues_d[starting_nodes[i]] * w/rsum_d[0]);
+        double wi = ceil(outdegrees[starting_nodes[i]]*random_walks_factor);
+        printf("\nnumber of walks to do = %lf at iteration %d\n", wi, i);
+        printf("starting node: %d, outdegree: %d\n", starting_nodes[i], outdegrees[starting_nodes[i]]);
+        //double ai = (residues_d[i] * w) / (rsum * wi);
+        // compute monte carlo
+        // pi0_d[i] += ai*rsum/w
+        for (int walks_done = 0; walks_done < wi; walks_done++)
         {
-            // compute monte carlo
-            // pi0_d[i] += ai*rsum/w
+            float flip = (float)curand_uniform(&state);
+            int current_node = starting_nodes[i];
+            while(outdegrees[current_node] > 0 && flip < (1-alpha)) {
+                int decision_interval = neighbor_start_idx_d[current_node + 1] - neighbor_start_idx_d[current_node];
+                int neighbor_chosen = ceil(decision_interval*curand_uniform(&state) + neighbor_start_idx_d[current_node]);
+                current_node = neighbor_chosen;
+                flip = curand_uniform(&state);
+            }
+            atomicAdd(&pi0_d[current_node], residues_d[starting_nodes[i]]/wi);
         }
-        */
     }
 }
 
@@ -153,10 +154,11 @@ __global__ void random_walks(double rsum, double w, double *pi0_d, int tot_nodes
 /* CPU function */
 //////////////////////////////
 
-void PersonalizedPageRank::initialize_outdegrees()
-{
-    for (int i = 0; i < V - 1; i++)
-    {
+
+
+void PersonalizedPageRank::initialize_outdegrees() {
+    for (int i = 0; i < V; i++)
+    {   
         // printf("node in the frontier = %d\n", frontier[i]);
         int start_idx = neighbor_start_idx[i];
         int end_idx = neighbor_start_idx[i + 1];
@@ -165,8 +167,13 @@ void PersonalizedPageRank::initialize_outdegrees()
         // the node is dropped from the frontier
         flags[frontier[i]] = false;
     }
-    flags[frontier[V]] = false;
+
+    for(int i = 0; i < V; i++) {
+        printf("Outdegree of node %d = %d\n", i, outdegrees[i]);
+    }
 }
+
+
 
 void PersonalizedPageRank::update_frontiers()
 {
@@ -174,20 +181,20 @@ void PersonalizedPageRank::update_frontiers()
     /* --- Compute the number of neighbors and drop the nodes from the frontier --- */
     // allocate the vector to store the degree of each node in the frontier
     int tot_neighbors = 0;
-    // int *outdegrees;
-    /*
-    one outdegree for each member of the frontier
+    //int *outdegrees;
+    /* 
+    one outdegree for each member of the frontier 
     err = cudaMallocManaged(&outdegrees, sizeof(int) * dim_frontier);
     printf("\nDim frontier = %d\n", dim_frontier);
     */
     for (int i = 0; i < dim_frontier; i++)
     {
-
+        
         tot_neighbors += outdegrees[frontier[i]];
         // the node is dropped from the frontier
         flags[frontier[i]] = false;
     }
-    // printf("Num outneighbors = %d\n", tot_neighbors);
+    printf("Number of outneighbors = %d\n", tot_neighbors);
     /* --- Add the neighbours to be considered in the vector out_neighbors --- */
     int *out_neighbors;
     /* all the neighbors to be considered */
@@ -217,12 +224,10 @@ void PersonalizedPageRank::update_frontiers()
     int n_blocks = ceil(tot_neighbors / 1024) + 1;
     int n_threads = ceil(tot_neighbors / n_blocks) + 1;
     cudaMemcpy(flags_d, flags, sizeof(bool) * V, cudaMemcpyHostToDevice);
-    compute_new_frontier<<<1, 1>>>(residues_d, rmax, flags_d, outdegrees, alpha, out_neighbors, tot_neighbors, frontier, dim_frontier);
+    compute_new_frontier<<<1,1>>>(residues_d, rmax, flags_d, outdegrees, alpha, out_neighbors, tot_neighbors, frontier, dim_frontier, rsum_d);
     CHECK(cudaDeviceSynchronize());
-
     cudaMemcpy(flags, flags_d, sizeof(bool) * V, cudaMemcpyDeviceToHost);
 
-    // Compute new frontier
     int idx_frontier = 0;
     for (int i = 0; i < V; i++)
     {
@@ -251,25 +256,19 @@ void PersonalizedPageRank::update_frontiers()
     }*/
 }
 
-__global__ void initialize_csr_parallel(int *x, int *y, int V, int E, int **out_neighbors, int *outdegrees)
-{
-    for (int index = threadIdx.x + blockDim.x * blockIdx.x; index < V; index += blockDim.x)
-    {
+__global__ void initialize_csr_parallel(int * x, int * y, int V, int E, int ** out_neighbors, int * outdegrees) {
+    for (int index = threadIdx.x + blockDim.x * blockIdx.x; index < V; index += blockDim.x) {
         int n_neighbors = 0;
-        for (int j = 0; j < E; j++)
-        {
-            if (y[j] == index)
-            {
+        for(int j = 0; j < E; j++) {
+            if(y[j] == index) {
                 n_neighbors++;
             }
         }
-        out_neighbors[index] = (int *)malloc(sizeof(int) * n_neighbors);
+        out_neighbors[index] = (int*)malloc(sizeof(int)*n_neighbors);
         outdegrees[index] = n_neighbors;
         int curr_idx = 0;
-        for (int j = 0; j < E; j++)
-        {
-            if (y[j] == index)
-            {
+        for(int j = 0; j < E; j++) {
+            if(y[j] == index) {
                 out_neighbors[index][curr_idx] = x[j];
                 curr_idx++;
             }
@@ -277,18 +276,15 @@ __global__ void initialize_csr_parallel(int *x, int *y, int V, int E, int **out_
     }
 }
 
-__global__ void print_neighbors(int **out_neighbors, int *outdegrees, int V)
-{
-    for (int i = 0; i < V; i++)
-    {
-        for (int j = 0; j < outdegrees[i]; j++)
-        {
+__global__ void print_neighbors(int ** out_neighbors, int * outdegrees, int V) {
+    for(int i = 0; i < V; i++) {
+        for(int j = 0; j < outdegrees[i]; j++) {
             printf("%d ", out_neighbors[i][j]);
         }
     }
 }
 
-// Construct CSR representation of the graph
+
 void PersonalizedPageRank::initialize_csr()
 {
     // allocate a vector containing the index of the starting neighbor
@@ -301,7 +297,7 @@ void PersonalizedPageRank::initialize_csr()
 
     for (int i = 0; i < V; i++)
     {
-        // auto start = std::chrono::system_clock::now();
+        //auto start = std::chrono::system_clock::now();
         for (int j = 0; j < E; j++)
         {
             if (y[j] == i)
@@ -311,18 +307,17 @@ void PersonalizedPageRank::initialize_csr()
             }
         }
         neighbor_start_idx[curr_neighbor_start_idx] = curr_neighbor;
-        // outdegrees[i] = neighbor_start_idx[curr_neighbor_start_idx] - neighbor_start_idx[curr_neighbor_start_idx - 1];
+        outdegrees[i] = neighbor_start_idx[curr_neighbor_start_idx] - neighbor_start_idx[curr_neighbor_start_idx - 1];
         curr_neighbor_start_idx++;
         /*auto end = std::chrono::system_clock::now();
         std::chrono::duration<double> elapsed_seconds = end-start;
         printf("Iteration done in %f\n", elapsed_seconds.count());*/
-        
     }
-    initialize_outdegrees();
-/*
+
     printf("\n --- Finished CSR initialization --- \n");
 
-    std::cout << "----- Outdegrees -----\n";
+    
+    /*std::cout << "----- Outdegrees -----\n";
         for (int i = 0; i < V ; i++)
         {
             std::cout << outdegrees[i] << " ";
@@ -332,56 +327,67 @@ void PersonalizedPageRank::initialize_csr()
         {
             std::cout << neighbor_start_idx[i] << " ";
         }
-    
-    std::cout << "\n----- Neighbours -----\n";
-    for (int i = 0; i < E; i++)
-    {
-        std::cout << neighbors[i] << " ";
-    }*/
+    */
+    /*    std::cout << "\n----- Neighbours -----\n";
+        for (int i = 0; i < E; i++)
+        {
+           std::cout << neighbors[i] << " ";
+        }
+    */
 }
 
 // CPU Utility functions;
 
 // Read the input graph and initialize it;
-void PersonalizedPageRank::initialize_graph() {
+void PersonalizedPageRank::initialize_graph()
+{
     // Read the graph from an MTX file;
     int num_rows = 0;
     int num_columns = 0;
     read_mtx(graph_file_path.c_str(), &x, &y, &val,
-        &num_rows, &num_columns, &E, // Store the number of vertices (row and columns must be the same value), and edges;
-        true,                        // If true, read edges TRANSPOSED, i.e. edge (2, 3) is loaded as (3, 2). We set this true as it simplifies the PPR computation;
-        false,                       // If true, read the third column of the matrix file. If false, set all values to 1 (this is what you want when reading a graph topology);
-        debug,                 
-        false,                       // MTX files use indices starting from 1. If for whatever reason your MTX files uses indices that start from 0, set zero_indexed_file=true;
-        true                         // If true, sort the edges in (x, y) order. If you have a sorted MTX file, turn this to false to make loading faster;
+             &num_rows, &num_columns, &E, // Store the number of vertices (row and columns must be the same value), and edges;
+             true,                        // If true, read edges TRANSPOSED, i.e. edge (2, 3) is loaded as (3, 2). We set this true as it simplifies the PPR computation;
+             false,                       // If true, read the third column of the matrix file. If false, set all values to 1 (this is what you want when reading a graph topology);
+             debug,
+             false, // MTX files use indices starting from 1. If for whatever reason your MTX files uses indices that start from 0, set zero_indexed_file=true;
+             true   // If true, sort the edges in (x, y) order. If you have a sorted MTX file, turn this to false to make loading faster;
     );
-    if (num_rows != num_columns) {
-        if (debug) std::cout << "error, the matrix is not squared, rows=" << num_rows << ", columns=" << num_columns << std::endl;
+    if (num_rows != num_columns)
+    {
+        if (debug)
+            std::cout << "error, the matrix is not squared, rows=" << num_rows << ", columns=" << num_columns << std::endl;
         exit(-1);
-    } else {
+    }
+    else
+    {
         V = num_rows;
     }
-    if (debug) std::cout << "loaded graph, |V|=" << V << ", |E|=" << E << std::endl;
+    if (debug)
+        std::cout << "loaded graph, |V|=" << V << ", |E|=" << E << std::endl;
 
     // Compute the dangling vector. A vertex is not dangling if it has at least 1 outgoing edge;
     dangling.resize(V);
-    std::fill(dangling.begin(), dangling.end(), 1);  // Initially assume all vertices to be dangling;
-    for (int i = 0; i < E; i++) {
+    std::fill(dangling.begin(), dangling.end(), 1); // Initially assume all vertices to be dangling;
+    for (int i = 0; i < E; i++)
+    {
         // Ignore self-loops, a vertex is still dangling if it has only self-loops;
-        if (x[i] != y[i]) dangling[y[i]] = 0;
+        if (x[i] != y[i])
+            dangling[y[i]] = 0;
     }
     // Initialize the CPU PageRank vector;
     pr.resize(V);
     pr_golden.resize(V);
     // Initialize the value vector of the graph (1 / outdegree of each vertex).
     // Count how many edges start in each vertex (here, the source vertex is y as the matrix is transposed);
-    int *outdegree = (int *) calloc(V, sizeof(int));
-    for (int i = 0; i < E; i++) {
+    int *outdegree = (int *)calloc(V, sizeof(int));
+    for (int i = 0; i < E; i++)
+    {
         outdegree[y[i]]++;
     }
     // Divide each edge value by the outdegree of the source vertex;
-    for (int i = 0; i < E; i++) {
-        val[i] = 1.0 / outdegree[y[i]];  
+    for (int i = 0; i < E; i++)
+    {
+        val[i] = 1.0 / outdegree[y[i]];
     }
     free(outdegree);
 }
@@ -395,13 +401,23 @@ void PersonalizedPageRank::alloc()
 
     // Load the input graph and preprocess it;
     initialize_graph();
-    
     // allocate the mask to store the status of the nodes in the frontier (all false by default)
     flags = (bool *)calloc(V, sizeof(bool));
     // at the beginning the frontier contains just the personalization vertex
     // frontier = (int *)malloc(sizeof(int));
     err = cudaMallocManaged(&frontier, sizeof(int));
-    err = cudaMallocManaged(&outdegrees, sizeof(int) * V);
+    err = cudaMallocManaged(&outdegrees, sizeof(int)*V);
+
+    // Attempt of parallelizing the CSR construction 
+    err = cudaMallocManaged(&out_neighbors, sizeof(int*)*V);
+    err = cudaMallocManaged(&x_d, sizeof(int)*E);
+    err = cudaMallocManaged(&y_d, sizeof(int)*E);
+
+
+    for(int i = 0; i < E; i++) {
+        x_d[i] = x[i];
+        y_d[i] = y[i];
+    }
 
     /*
     initialize_csr_parallel<<<1,16>>>(x_d, y_d, V, E, out_neighbors, outdegrees);
@@ -411,17 +427,13 @@ void PersonalizedPageRank::alloc()
     printf("\n --- Finished parallel graph initialization --- \n");
     */
     // finish attempt
-    
 
     initialize_csr();
+
     // Allocate any GPU data here;
     // TODO!
-
-    // CSR variables
     err = cudaMalloc(&neighbor_start_idx_d, sizeof(int) * (V + 1));
     err = cudaMalloc(&neighbors_d, sizeof(int) * E);
-
-    // Forward push variables
     err = cudaMalloc(&pi0_d, sizeof(double) * V);
     err = cudaMalloc(&residues_d, sizeof(double) * V);
     err = cudaMalloc(&flags_d, sizeof(bool) * V);
@@ -431,8 +443,6 @@ void PersonalizedPageRank::alloc()
     /*double * personal_x = (double*)malloc(sizeof(double)*V);
     cudaMemcpy(personal_x, residues_d, sizeof(double)*V, cudaMemcpyDeviceToHost);
     std::cout << "\nValue of x = " << personal_x[0];*/
-
-    
 }
 
 // Initialize data;
@@ -443,11 +453,18 @@ void PersonalizedPageRank::init()
 
     // Compute Rmax
     threshold = 1.0 / V; // should be O(1/n) but i don't know yet which is the best value
-    rmax = (convergence_threshold / sqrt(E)) * sqrt(threshold / (((2.0 * convergence_threshold / 3.0) + 2.0) * (log(2.0 / failure_probability))));
-    // std::cout << "rmax = " << rmax << '\n'; // It seems really small
+    rmax = (threshold / sqrt(E)) * sqrt(convergence_threshold / (((2.0 * threshold / 3.0) + 2.0) * (log(2.0 / failure_probability))));
+
+    random_walks_factor = rmax*((2*threshold/3+2)*log(2*V*log(V)/failure_probability))/(threshold*threshold*convergence_threshold);
+
+    std::cout << "rmax = " << rmax << '\n'; // It seems really small
+
+    cudaMemset(residues_d, 0.0, sizeof(double) * V);
+    cudaMemset(pi0_d, 0.0, sizeof(double) * V);
 
     cudaMemcpy(neighbor_start_idx_d, neighbor_start_idx, sizeof(int) * (V + 1), cudaMemcpyHostToDevice);
     cudaMemcpy(neighbors_d, neighbors, sizeof(int) * E, cudaMemcpyHostToDevice);
+    cudaMemcpy(flags_d, flags, sizeof(bool) * V, cudaMemcpyHostToDevice);
 }
 
 // Reset the state of the computation after every iteration.
@@ -480,79 +497,91 @@ void PersonalizedPageRank::reset()
 void PersonalizedPageRank::execute(int iter)
 {
     // Do the GPU computation here, and also transfer results to the CPU;
+    // TODO! (and save the GPU PPR values into the "pr" array)
+    /*while(frontier.size() > 0) {
 
-    // ---> START FORWARD PUSH
 
-    // Initialize the frontier
+    }*/
+    // This should be moved to the execute stage.
+    err = cudaMallocManaged(&rsum_d, sizeof(double));
+    rsum_d[0] = 1.0;
     dim_frontier = 1;
     frontier[0] = personalization_vertex;
     flags[personalization_vertex] = true;
-
-    // Set the residue of the source of the PPR algorithm to 1
     modify_device_array_value<<<1, 1>>>(residues_d, personalization_vertex, 1.0);
     CHECK(cudaDeviceSynchronize());
-
+    // int dim_frontier_old; // used to update pi0 and r
+    // int ma = 0;
     while (dim_frontier > 0)
     {
-        // Update the residues and decide whether the visited node has to be added to the frontier
-        update_frontiers();
-        CHECK(cudaDeviceSynchronize());
-
-        // Update pi0 and the residues of the node in the frontier yet
+        // printf("\n----> iteration %d\n", ma+1);
+        // ma++;
         int n_blocks = ceil(dim_frontier / 1024) + 1;
         int n_threads = ceil(dim_frontier / n_blocks) + 1;
+        // CHECK(cudaDeviceSynchronize());
+        // dim_frontier_old = dim_frontier;
+        update_frontiers();
+        CHECK(cudaDeviceSynchronize());
         update_pi0_and_r<<<n_blocks, n_threads>>>(frontier, alpha, pi0_d, residues_d, dim_frontier);
         CHECK(cudaDeviceSynchronize());
-
         frontier = new_frontier;
         dim_frontier = new_dim_frontier;
     }
-    // END FORWARD PUSH <---
+    pi0 = (double *)malloc(sizeof(double) * V);
+    cudaMemcpy(pi0, pi0_d, sizeof(double) * V, cudaMemcpyDeviceToHost);
 
-    // ---> START RANDOM SAMPLING (MONTECARLO)
-
+    // New part --->
     residues = (double *)malloc(sizeof(double) * V);
     cudaMemcpy(residues, residues_d, sizeof(double) * V, cudaMemcpyDeviceToHost);
 
-    // Counter for storing the number of nodes with positive residue
     int count_positive_residues = 0;
+    positive_residues = (int *)malloc(sizeof(int) * V);
 
-    // Structure for storing the nodes with positive residue
-    positive_residues = (double *)malloc(sizeof(int) * V);
-    rsum = 0;
-    // Compute rsum and save in an array all the nodes with positive residues
+    // compute rsum and save in an array all the nodes with positive residues
     for (int i = 0; i < V; i++)
     {
         if (residues[i] > 0)
         {
-            rsum += residues[i];
+            //rsum += residues[i];
             positive_residues[count_positive_residues] = i;
             count_positive_residues++;
         }
     }
 
-    // Adjust the size
-    positive_residues = (double *)realloc(positive_residues, count_positive_residues);
+    /* adjust the size
+    positive_residues = realloc(positive_residues, count_positive_residues);
+    printf("--- Positive residues after realloc ---\n");
+    for(int i = 0; i < count_positive_residues; i++) {
+        printf("node with positive residue: %d\n", positive_residues[i]);
+    }*/
+    err = cudaMallocManaged(&positive_residues_d, sizeof(int)*count_positive_residues);
+    for(int i = 0; i < count_positive_residues; i++) {
+        positive_residues_d[i] = positive_residues[i];
+    }
 
-    // Compute w
-    w = rsum * ((2 * convergence_threshold / 3 + 2) * log(2.0 / failure_probability) / (convergence_threshold * convergence_threshold * threshold));
+    //free(positive_residues);
 
-    // For every node in positive_residue instantiate a thread on the GPU and compute the random walks
+    //cudaMemcpy(positive_residues_d, positive_residues, sizeof(int)*count_positive_residues, cudaMemcpyHostToDevice);
+
+    //w = rsum_d[0] * ((2 * threshold / 3 + 2) * log(2.0 / failure_probability) / (convergence_threshold * threshold * threshold));
+    //printf("Number of random walks to do = %lf\n", w);
+    // for every node in positive_residue instantiate a thread on the GPU and compute the random walks
+    printf("Number of positive residues = %d\n", count_positive_residues);
+    //cudaMemcpy(pi0_d, pi0, sizeof(double) * V, cudaMemcpyHostToDevice); // i'm not sure that this step is necessary
+    //cudaMemcpy(residues_d, residues, sizeof(double) * V, cudaMemcpyHostToDevice);
     int n_blocks = ceil(count_positive_residues / 1024) + 1;
     int n_threads = ceil(count_positive_residues / n_blocks) + 1;
-    random_walks<<<n_blocks, n_threads>>>(rsum, w, pi0_d, count_positive_residues);
+    random_walks<<<1,1>>>(random_walks_factor, w, pi0_d, residues_d, count_positive_residues, positive_residues_d, outdegrees, neighbor_start_idx_d, alpha);
+    CHECK(cudaDeviceSynchronize());
+    // End new part <----
 
-    // END RANDOM SAMPLING (MONTECARLO) <---
-
-    // Save the GPU PPR values into the "pr" array
-    pi0 = (double *)malloc(sizeof(double) * V);
-    cudaMemcpy(pi0, pi0_d, sizeof(double) * V, cudaMemcpyDeviceToHost);
-
+    // printf("\n--- Estimated pi ---\n");
     for (int i = 0; i < V; i++)
     {
         // printf("pi_(%d) = %lf\n", i, pi0[i]);
         pr[i] = pi0[i];
     }
+
 }
 
 void PersonalizedPageRank::cpu_validation(int iter)
@@ -568,7 +597,6 @@ void PersonalizedPageRank::cpu_validation(int iter)
     std::cout << "exec time CPU=" << double(exec_time) / 1000 << " ms" << std::endl;
 
     // Obtain the vertices with highest PPR value;
-
     std::vector<std::pair<int, double>> sorted_pr_tuples = sort_pr(pr.data(), V);
     std::vector<std::pair<int, double>> sorted_pr_golden_tuples = sort_pr(pr_golden.data(), V);
 
@@ -631,20 +659,5 @@ std::string PersonalizedPageRank::print_result(bool short_form)
 void PersonalizedPageRank::clean()
 {
     // Delete any GPU data or additional CPU data;
-    /*
-    free(positive_residues);
-    free(new_frontier);
-    free(frontier);
-    free(flags);
-    free(pi0);
-    free(residues);
-    free(neighbors);
-    free(neighbor_start_idx);
-    free(outdegrees);
-    cudaFree(flags_d);
-    cudaFree(pi0_d);
-    cudaFree(residues_d);
-    cudaFree(neighbors_d);
-    cudaFree(neighbor_start_idx_d);
-    */
+    // TODO!
 }
