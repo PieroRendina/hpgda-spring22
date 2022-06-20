@@ -192,7 +192,7 @@ private:
     // Residues values during forward push
     double *residues_d;
     double *residues;
-    double *positive_residues;
+    int *positive_residues;
 
     // Reserve values during forward push
     double *pi0_d;
@@ -217,4 +217,7 @@ private:
     int ** out_neighbors;
     int * x_d;
     int * y_d;
+    double * rsum_d;
+    int * positive_residues_d; 
+    double random_walks_factor;
 };
