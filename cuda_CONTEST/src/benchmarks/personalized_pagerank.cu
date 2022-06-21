@@ -102,7 +102,7 @@ __global__ void compute_new_frontier(double *r_d, double rmax, bool *flags_d, in
         {
             // changed out_neighbors[j] in frontier[j] 
             r_d[out_neighbors[idx]] += (1 - alpha) * r_d[frontier[j]] / outdegrees[frontier[j]];
-            printf("out neighbor considered = %d, residue = %lf, outdegree = %d\n", out_neighbors[idx], r_d[out_neighbors[idx]], outdegrees[out_neighbors[idx]]);
+            //printf("out neighbor considered = %d, residue = %lf, outdegree = %d\n", out_neighbors[idx], r_d[out_neighbors[idx]], outdegrees[out_neighbors[idx]]);
             
             if(outdegrees[out_neighbors[idx]] > 0) {
                 if (r_d[out_neighbors[idx]]/outdegrees[out_neighbors[idx]] > rmax && flags_d[out_neighbors[idx]] != true)
@@ -130,7 +130,7 @@ __global__ void random_walks(double random_walks_factor, double w, double * pi0_
     curandState state;
     curand_init(0, i, 0, &state);
     // iterate through all the starting nodes 
-    for ( ; i < tot_nodes; i += blockDim.x) 
+    for ( ; i < tot_nodes; i += blockDim.x * gridDim.x) 
     {
         // compute the number of walks to do
         //double wi = ceil(residues_d[starting_nodes[i]] * w/rsum_d[0]);
@@ -155,6 +155,24 @@ __global__ void random_walks(double random_walks_factor, double w, double * pi0_
     }
 }
 
+__global__ void perform_random_walks(int n_walks, int starting_node, int * outdegrees, int * neighbor_start_idx_d, double alpha, double * pi0_d, double * residues_d) {
+    int i = blockIdx.x * blockDim.x + threadIdx.x;
+    curandState state;
+    curand_init(0, i, 0, &state);
+    for (; i < n_walks; i += blockDim.x * gridDim.x) {
+            float flip = (float)curand_uniform(&state);
+            int current_node = starting_node;
+            while(outdegrees[current_node] > 0 && flip < (1-alpha)) {
+                int decision_interval = neighbor_start_idx_d[current_node + 1] - neighbor_start_idx_d[current_node];
+                int neighbor_chosen = ceil(decision_interval*curand_uniform(&state) + neighbor_start_idx_d[current_node]);
+                current_node = neighbor_chosen;
+                flip = curand_uniform(&state);
+            }
+            atomicAdd(&pi0_d[current_node], residues_d[starting_node]/n_walks);
+    }
+}
+
+
 //////////////////////////////
 /* CPU function */
 //////////////////////////////
@@ -173,6 +191,18 @@ void PersonalizedPageRank::initialize_outdegrees() {
 
     for(int i = 0; i < V; i++) {
         printf("Outdegree of node %d = %d\n", i, outdegrees[i]);
+    }
+}
+
+
+void PersonalizedPageRank::generate_random_walks(int count_positive_residues) {
+    for(int i = 0; i < count_positive_residues; i++) {
+        int walks_per_node = ceil(outdegrees[positive_residues[i]]*random_walks_factor);
+        int n_blocks = 1;
+        int n_threads = 32;
+        printf("Starting node = %d, number of random_walks = %d\n", positive_residues[i], walks_per_node);
+        perform_random_walks<<<n_blocks, n_threads>>>(walks_per_node, positive_residues_d[i], outdegrees, neighbor_start_idx_d, alpha, pi0_d, residues_d);
+        CHECK(cudaDeviceSynchronize());
     }
 }
 
@@ -399,10 +429,11 @@ void PersonalizedPageRank::initialize_graph()
 //////////////////////////////
 
 // Allocate data on the CPU and GPU;
+
 void PersonalizedPageRank::alloc()
 {
-
     // Load the input graph and preprocess it;
+    //read_from_file();
     initialize_graph();
     // allocate the mask to store the status of the nodes in the frontier (all false by default)
     flags = (bool *)calloc(V, sizeof(bool));
@@ -422,14 +453,6 @@ void PersonalizedPageRank::alloc()
         y_d[i] = y[i];
     }
 
-    /*
-    initialize_csr_parallel<<<1,16>>>(x_d, y_d, V, E, out_neighbors, outdegrees);
-    CHECK(cudaDeviceSynchronize());
-    print_neighbors<<<1,1>>>(out_neighbors, outdegrees, V);
-    CHECK(cudaDeviceSynchronize());
-    printf("\n --- Finished parallel graph initialization --- \n");
-    */
-    // finish attempt
 
     initialize_csr();
 
@@ -440,15 +463,12 @@ void PersonalizedPageRank::alloc()
     err = cudaMalloc(&pi0_d, sizeof(double) * V);
     err = cudaMalloc(&residues_d, sizeof(double) * V);
     err = cudaMalloc(&flags_d, sizeof(bool) * V);
-    // err = cudaMalloc(&frontier_d, sizeof(int));
-    //  some variables may be missing
-
-    /*double * personal_x = (double*)malloc(sizeof(double)*V);
-    cudaMemcpy(personal_x, residues_d, sizeof(double)*V, cudaMemcpyDeviceToHost);
-    std::cout << "\nValue of x = " << personal_x[0];*/
 }
 
+
+
 // Initialize data;
+
 void PersonalizedPageRank::init()
 {
     // Do any additional CPU or GPU setup here;
@@ -457,18 +477,21 @@ void PersonalizedPageRank::init()
     // Compute Rmax
     threshold = 1.0 / V; // should be O(1/n) but i don't know yet which is the best value
     rmax = (convergence_threshold / sqrt(E)) * sqrt(threshold / (((2.0 * convergence_threshold / 3.0) + 2.0) * (log(2.0 / failure_probability))));
-
-    random_walks_factor = rmax*((2*convergence_threshold/3+2)*log(2*V*log(V)/failure_probability))/(threshold*convergence_threshold*convergence_threshold);
-
     std::cout << "rmax = " << rmax << '\n'; // It seems really small
+    random_walks_factor = rmax*((2*convergence_threshold/3+2)*log(2*V*log(V)/failure_probability))/(threshold*convergence_threshold*convergence_threshold);
 
     cudaMemset(residues_d, 0.0, sizeof(double) * V);
     cudaMemset(pi0_d, 0.0, sizeof(double) * V);
-
     cudaMemcpy(neighbor_start_idx_d, neighbor_start_idx, sizeof(int) * (V + 1), cudaMemcpyHostToDevice);
     cudaMemcpy(neighbors_d, neighbors, sizeof(int) * E, cudaMemcpyHostToDevice);
     cudaMemcpy(flags_d, flags, sizeof(bool) * V, cudaMemcpyHostToDevice);
 }
+
+/*void PersonalizedPageRank::alloc() {
+  for(int i = 0; i < 10; i++) {
+    printf("%d) neighbor start index = %d, outdegree = %d\n", i, neighbor_start_idx[i], outdegrees[i]);
+  }
+}*/
 
 // Reset the state of the computation after every iteration.
 // Reset the result, and transfer data to the GPU if necessary;
@@ -544,7 +567,8 @@ void PersonalizedPageRank::execute(int iter)
     // compute rsum and save in an array all the nodes with positive residues
     for (int i = 0; i < V; i++)
     {
-        if (residues[i] > 0)
+        // stores just the nodes whose outdegree is positive
+        if (residues[i] > 0 && outdegrees[i] > 0)
         {
             //rsum += residues[i];
             positive_residues[count_positive_residues] = i;
@@ -573,10 +597,17 @@ void PersonalizedPageRank::execute(int iter)
     printf("Number of positive residues = %d\n", count_positive_residues);
     //cudaMemcpy(pi0_d, pi0, sizeof(double) * V, cudaMemcpyHostToDevice); // i'm not sure that this step is necessary
     //cudaMemcpy(residues_d, residues, sizeof(double) * V, cudaMemcpyHostToDevice);
+
+    /* --- Parallelizing for each node, random walks done sequentially --- 
     int n_blocks = ceil(count_positive_residues / 1024) + 1;
     int n_threads = ceil(count_positive_residues / n_blocks) + 1;
     random_walks<<<n_blocks, n_threads>>>(random_walks_factor, w, pi0_d, residues_d, count_positive_residues, positive_residues_d, outdegrees, neighbor_start_idx_d, alpha);
-    CHECK(cudaDeviceSynchronize());
+    CHECK(cudaDeviceSynchronize()); */
+
+    /* --- Parallelizing random walks per node --- */
+    generate_random_walks(count_positive_residues);
+
+
     // End new part <----
 
     // printf("\n--- Estimated pi ---\n");
@@ -664,4 +695,59 @@ void PersonalizedPageRank::clean()
 {
     // Delete any GPU data or additional CPU data;
     // TODO!
+}
+
+
+
+
+// Reader functions
+void PersonalizedPageRank::read_from_file()
+{
+    int read_idx = 0;
+    int read_out = 0;
+    int count = 0;
+
+    FILE *f;
+    char line[256];
+    f = fopen("/content/drive/MyDrive/hpgda-spring22-main/cuda_CONTEST/data/demo.txt", "r");
+
+    fgets(line, 256, f);
+    fgets(line, 256, f);
+
+    neighbors = (int *)malloc(atoi(line) * sizeof(int));
+    printf("Neighbours number: %d\n", atoi(line));
+    while (fgets(line, 256, f) != NULL)
+    {
+        if (line[0] != '#' && read_idx == 0 && read_out == 0)
+        { // read neighbords
+            neighbors[count] = atoi(line);
+            count++;
+        }
+        else if (line[0] == '#' && read_idx == 0 && read_out == 0)
+        { // end the reading of the neighbors and I will start with the idx
+            fgets(line, 256, f);
+            neighbor_start_idx = (int *)malloc(atoi(line) * sizeof(int));
+            printf("Index number: %d\n", atoi(line));
+            read_idx = 1;
+            count = 0;
+        }
+        else if (line[0] != '#' && read_idx == 1 && read_out == 0)
+        { // read index
+            neighbor_start_idx[count] = atoi(line);
+            count++;
+        }
+        else if (line[0] == '#' && read_idx == 1 && read_out == 0)
+        { // end the reading of the indexes and I will start with the out
+            fgets(line, 256, f);
+            outdegrees = (int *)malloc(atoi(line) * sizeof(int));
+            printf("Outdegree number: %d\n", atoi(line));
+            read_out = 1;
+            count = 0;
+        }
+        else
+        { // read out
+            outdegrees[count] = atoi(line);
+            count++;
+        }
+    }
 }
