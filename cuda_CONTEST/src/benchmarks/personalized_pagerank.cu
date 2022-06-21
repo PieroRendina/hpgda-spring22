@@ -76,7 +76,7 @@ __global__ void update_pi0_and_r(int *frontier_d, double alpha, double *pi0_d, d
 }
 
 //  TODO change this function because it doesn't work
-__global__ void compute_new_frontier(double *r_d, double rmax, bool *flags_d, int *outdegrees, double alpha, int *out_neighbors, int tot_neighbors, int * frontier, int dim_frontier, double * rsum_d)
+__global__ void compute_new_frontier(double *r_d, double rmax, bool *flags_d, int *outdegrees, double alpha, int *out_neighbors, int tot_neighbors, int * frontier, int dim_frontier, double * rsum_d, double * pi0_d)
 {
     /*for(int j = blockIdx.x * blockDim.x + threadIdx.x; j < tot_neighbors ; j += blockDim.x * gridDim.x) {
         if(outdegrees[j] > 0){
@@ -102,13 +102,18 @@ __global__ void compute_new_frontier(double *r_d, double rmax, bool *flags_d, in
         {
             // changed out_neighbors[j] in frontier[j] 
             r_d[out_neighbors[idx]] += (1 - alpha) * r_d[frontier[j]] / outdegrees[frontier[j]];
-            // printf("residue considered = %lf\n", r_d[out_neighbors[idx]]);
+            printf("out neighbor considered = %d, residue = %lf, outdegree = %d\n", out_neighbors[idx], r_d[out_neighbors[idx]], outdegrees[out_neighbors[idx]]);
+            
             if(outdegrees[out_neighbors[idx]] > 0) {
                 if (r_d[out_neighbors[idx]]/outdegrees[out_neighbors[idx]] > rmax && flags_d[out_neighbors[idx]] != true)
                 {
                     __syncthreads();
                     flags_d[out_neighbors[idx]] = true;
                 }
+            }
+            else {
+                pi0_d[out_neighbors[idx]] += alpha*r_d[out_neighbors[idx]];
+                r_d[out_neighbors[idx]] = 0.0;
             }
             idx++;
         }
@@ -132,7 +137,7 @@ __global__ void random_walks(double random_walks_factor, double w, double * pi0_
         double wi = ceil(outdegrees[starting_nodes[i]]*random_walks_factor);
         printf("\nnumber of walks to do = %lf at iteration %d\n", wi, i);
         printf("starting node: %d, outdegree: %d\n", starting_nodes[i], outdegrees[starting_nodes[i]]);
-        //double ai = (residues_d[i] * w) / (rsum * wi);
+        // double ai = (residues_d[i] * w) / (rsum * wi);
         // compute monte carlo
         // pi0_d[i] += ai*rsum/w
         for (int walks_done = 0; walks_done < wi; walks_done++)
@@ -153,8 +158,6 @@ __global__ void random_walks(double random_walks_factor, double w, double * pi0_
 //////////////////////////////
 /* CPU function */
 //////////////////////////////
-
-
 
 void PersonalizedPageRank::initialize_outdegrees() {
     for (int i = 0; i < V; i++)
@@ -224,7 +227,7 @@ void PersonalizedPageRank::update_frontiers()
     int n_blocks = ceil(tot_neighbors / 1024) + 1;
     int n_threads = ceil(tot_neighbors / n_blocks) + 1;
     cudaMemcpy(flags_d, flags, sizeof(bool) * V, cudaMemcpyHostToDevice);
-    compute_new_frontier<<<1,1>>>(residues_d, rmax, flags_d, outdegrees, alpha, out_neighbors, tot_neighbors, frontier, dim_frontier, rsum_d);
+    compute_new_frontier<<<n_blocks,n_threads>>>(residues_d, rmax, flags_d, outdegrees, alpha, out_neighbors, tot_neighbors, frontier, dim_frontier, rsum_d, pi0_d);
     CHECK(cudaDeviceSynchronize());
     cudaMemcpy(flags, flags_d, sizeof(bool) * V, cudaMemcpyDeviceToHost);
 
@@ -453,9 +456,9 @@ void PersonalizedPageRank::init()
 
     // Compute Rmax
     threshold = 1.0 / V; // should be O(1/n) but i don't know yet which is the best value
-    rmax = (threshold / sqrt(E)) * sqrt(convergence_threshold / (((2.0 * threshold / 3.0) + 2.0) * (log(2.0 / failure_probability))));
+    rmax = (convergence_threshold / sqrt(E)) * sqrt(threshold / (((2.0 * convergence_threshold / 3.0) + 2.0) * (log(2.0 / failure_probability))));
 
-    random_walks_factor = rmax*((2*threshold/3+2)*log(2*V*log(V)/failure_probability))/(threshold*threshold*convergence_threshold);
+    random_walks_factor = rmax*((2*convergence_threshold/3+2)*log(2*V*log(V)/failure_probability))/(threshold*convergence_threshold*convergence_threshold);
 
     std::cout << "rmax = " << rmax << '\n'; // It seems really small
 
@@ -475,6 +478,7 @@ void PersonalizedPageRank::reset()
     std::fill(pr.begin(), pr.end(), 1.0 / V);
     // Generate a new personalization vertex for this iteration;
     personalization_vertex = rand() % V;
+    //personalization_vertex = 6016;
     if (debug)
         std::cout << "personalization vertex=" << personalization_vertex << std::endl;
 
@@ -571,7 +575,7 @@ void PersonalizedPageRank::execute(int iter)
     //cudaMemcpy(residues_d, residues, sizeof(double) * V, cudaMemcpyHostToDevice);
     int n_blocks = ceil(count_positive_residues / 1024) + 1;
     int n_threads = ceil(count_positive_residues / n_blocks) + 1;
-    random_walks<<<1,1>>>(random_walks_factor, w, pi0_d, residues_d, count_positive_residues, positive_residues_d, outdegrees, neighbor_start_idx_d, alpha);
+    random_walks<<<n_blocks, n_threads>>>(random_walks_factor, w, pi0_d, residues_d, count_positive_residues, positive_residues_d, outdegrees, neighbor_start_idx_d, alpha);
     CHECK(cudaDeviceSynchronize());
     // End new part <----
 
