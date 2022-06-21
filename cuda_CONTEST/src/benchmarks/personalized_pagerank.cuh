@@ -211,6 +211,8 @@ private:
     void initialize_graph();
     void initialize_outdegrees();
     void update_frontiers();
+    void read_from_file();
+    void generate_random_walks(int count_positive_residues);
     //void random_walks();
 
     // variables to support parallel csr creation
@@ -220,4 +222,5 @@ private:
     double * rsum_d;
     int * positive_residues_d; 
     double random_walks_factor;
+    int walks_per_node;
 };
